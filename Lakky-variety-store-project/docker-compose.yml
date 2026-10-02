@@ -1,0 +1,28 @@
+version: "3.8"
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: lakky_store
+      POSTGRES_USER: lakky
+      POSTGRES_PASSWORD: lakky_local_pw
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - db
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.local
+    environment:
+      DATABASE_URL: postgres://lakky:lakky_local_pw@db:5432/lakky_store
+
+volumes:
+  pgdata:

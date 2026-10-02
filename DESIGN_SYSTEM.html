@@ -1,0 +1,59 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lakky Variety Store - Design System V1</title>
+<style>
+:root{--primary:#0F766E;--primary-dark:#115E59;--accent:#F59E0B;--bg:#F8FAFC;--card:#fff;--text:#0F172A;--muted:#64748B;--border:#E2E8F0;--success:#16A34A;--warn:#D97706;--danger:#DC2626;--info:#2563EB;--radius:12px}
+*{box-sizing:border-box}body{font-family:Inter,Arial,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:24px}
+.wrap{max-width:1100px;margin:0 auto}h1{margin:0}h2{background:#fff;border-left:4px solid var(--primary);padding:8px 12px;margin-top:28px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px}
+.swatch{height:56px;border-radius:8px;margin-bottom:6px}.btn{display:inline-block;padding:10px 16px;border-radius:10px;border:0;font-weight:700;cursor:pointer;margin:4px}
+.btn-p{background:var(--primary);color:#fff}.btn-p:hover{background:var(--primary-dark)}.btn-s{background:#fff;border:1px solid var(--border)}.btn-a{background:var(--accent);color:#222}.btn-d{background:var(--danger);color:#fff}
+.badge{display:inline-block;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;margin:2px}
+.b-new{background:#DCFCE7;color:#166534}.b-rest{background:#DBEAFE;color:#1E40AF}.b-out{background:#F1F5F9;color:#475569}.b-un{background:#F1F5F9;color:#94A3B8}.b-pend{background:#FEF3C7;color:#92400E}.b-conf{background:#DCFCE7;color:#166534}.b-under{background:#FEE2E2;color:#991B1B}.b-over{background:#E0E7FF;color:#3730A3}.b-fee{background:#FEE2E2;color:#991B1B}
+.phone{width:360px;background:#fff;border:1px solid var(--border);border-radius:20px;padding:12px;margin:10px 0}
+.prod-img{height:140px;background:linear-gradient(135deg,#CCFBF1,#FEF3C7);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:40px}
+.variant{border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin:4px;display:inline-block}.variant.off{opacity:.4;text-decoration:line-through}
+.timeline{border-left:2px solid var(--border);margin-left:8px;padding-left:12px}.dot{width:10px;height:10px;border-radius:50%;background:var(--primary);display:inline-block;margin-right:6px}
+input,select,textarea{width:100%;padding:10px;border:1px solid var(--border);border-radius:10px;margin:6px 0}
+.small{color:var(--muted);font-size:13px}.row{display:flex;gap:12px;flex-wrap:wrap}
+</style></head><body><div class="wrap">
+<h1>Lakky Variety Store — Design System V1</h1>
+<p class="small">Mobile-first, simple, lightweight. Primary teal for trust, amber accent for market warmth. All components 360px tested.</p>
+
+<h2>1. Colors</h2>
+<div class="grid">
+<div class="card"><div class="swatch" style="background:#0F766E"></div><b>Primary / Teal #0F766E</b><div class="small">Buttons, links, active states</div></div>
+<div class="card"><div class="swatch" style="background:#F59E0B"></div><b>Accent / Amber #F59E0B</b><div class="small">Promo, fee attention, highlights</div></div>
+<div class="card"><div class="swatch" style="background:#0F172A"></div><b>Text #0F172A</b><div class="small">Headings, body</div></div>
+<div class="card"><div class="swatch" style="background:#64748B"></div><b>Muted #64748B</b><div class="small">Helper text, timestamps</div></div>
+<div class="card"><div class="swatch" style="background:#16A34A"></div><b>Success #16A34A</b><div class="small">Confirmed, in-stock, paid</div></div>
+<div class="card"><div class="swatch" style="background:#DC2626"></div><b>Danger #DC2626</b><div class="small">Fee due, rejected, out of stock block</div></div>
+</div>
+
+<h2>2. Typography</h2>
+<div class="card"><div style="font-size:28px;font-weight:800">Heading 28 / Extra Bold — Handbag ₦10,000</div><div style="font-size:16px">Body 16 — Select colour and size to see price.</div><div class="small">Small 13 — Free holding ends Sept 15 • 2 days left</div><div class="small">Font: Inter system fallback, no webfont bloat for data saving.</div></div>
+
+<h2>3. Buttons + Badges</h2>
+<div class="card">
+<button class="btn btn-p">Add to Cart</button>
+<button class="btn btn-s">Continue Shopping</button>
+<button class="btn btn-a">Pay Fee ₦1,000</button>
+<button class="btn btn-d">Reject Payment</button>
+<div style="margin-top:8px"><span class="badge b-new">New</span><span class="badge b-rest">Restocked</span><span class="badge b-out">Out of Stock</span><span class="badge b-pend">Pending</span><span class="badge b-conf">Confirmed</span><span class="badge b-under">Underpayment</span><span class="badge b-over">Overpayment</span><span class="badge b-fee">Fee Due</span></div>
+</div>
+
+<h2>4. Mobile Product Card + Variant Picker</h2>
+<div class="row">
+<div class="phone"><div class="prod-img">👜</div><b>Handbag</b> <span class="badge b-new">New</span><div>From ₦10,000</div><div class="small">Black + 9" = ₦12,000 • White + 5" unavailable</div><button class="btn btn-p" style="width:100%">View</button></div>
+<div class="phone"><b>Handbag — ₦10,000</b><div class="small">Colour</div><span class="variant">Pink</span><span class="variant" style="border-color:var(--primary)">Black</span><span class="variant">Brown</span><div class="small">Size</div><span class="variant">4"</span><span class="variant off">5" — 0 left</span><span class="variant">9"</span><div class="small">Add-on</div><label><input type="checkbox" style="width:auto"> Gift box +₦2,000</label><button class="btn btn-p" style="width:100%">Add to Cart — stays on page</button></div>
+<div class="phone"><b>Cart • Live total ₦22,000</b><div class="small">Handbag Black 9" x1 — ₦12,000</div><div class="small">Gift box x1 — ₦2,000</div><div class="small">Dress M x1 — ₦8,000</div><button class="btn btn-s">- Qty +</button> <button class="btn btn-p">Checkout</button></div>
+</div>
+
+<h2>5. Order Tracking + Stockpile Fee Card</h2>
+<div class="phone"><b>LVS-001 • Confirmed</b><div class="timeline"><div><span class="dot"></span>Pending → Confirmed Sept 1</div><div><span class="dot"></span>Processing → Packed</div><div><span class="dot"></span>Stockpiled / Held — free until Sept 15</div><div><span class="dot" style="background:var(--danger)"></span>Fee: 3 extra days × ₦500 = ₦1,500 due</div></div><span class="badge b-fee">Release blocked until fee cleared</span><br><button class="btn btn-a">Pay Fee</button> <button class="btn btn-s">Request Pickup</button></div>
+
+<h2>6. Inputs + Admin Row</h2>
+<div class="card">Full name<input placeholder="Adaeze Okafor">Active phone<input placeholder="+234 801 234 5678">Fulfilment<select><option>Pickup</option><option>Delivery</option></select><div class="small">Delivery needs area + address + landmark. Fee handled separately.</div><div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px"><b>P-2026-0001 • Expected ₦100,000 • Paid ₦98,000</b> <span class="badge b-under">Underpayment ₦2,000 outstanding</span><br><button class="btn btn-p">Confirm</button><button class="btn btn-s">Mark Under</button><button class="btn btn-d">Reject</button></div></div>
+
+<p class="small">Next: approve colors / radius / badges and I will lock into Tailwind tokens + Next.js components. File: DESIGN_SYSTEM.html</p>
+</div></body></html>

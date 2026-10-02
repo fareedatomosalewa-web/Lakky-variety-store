@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Lakky Variety Store - Real Implementation Plan V1</title>
+<style>
+body{font-family:Arial,Helvetica,sans-serif;margin:40px;color:#1a1a1a;line-height:1.5}
+h1{font-size:26px;margin-bottom:4px} .sub{color:#555;margin-bottom:24px}
+h2{font-size:18px;margin-top:32px;background:#f2f4f7;padding:8px 12px;border-left:4px solid #1a73e8}
+table{border-collapse:collapse;width:100%;margin:12px 0 20px 0;font-size:14px}
+th{background:#1a73e8;color:#fff;text-align:left;padding:10px}
+td{border:1px solid #d0d7de;padding:9px;vertical-align:top}
+tr:nth-child(even) td{background:#f8fafc}
+.note{background:#fff8e1;border:1px solid #f0c36d;padding:10px 12px;margin:12px 0}
+.small{font-size:12px;color:#666}
+</style></head><body>
+<h1>Lakky Variety Store App — Real Implementation Plan V1</h1>
+<div class="sub">Source: PRD V1 (42 sections) &nbsp;|&nbsp; Status: Planning only, no build yet &nbsp;|&nbsp; Copy this page directly into Google Docs: Select All → Copy → Paste — tables preserved.</div>
+
+<h2>1. Architecture and Stack</h2>
+<table><tr><th>Domain</th><th>Recommendation</th><th>Reason / Details</th></tr>
+<tr><td>App Type</td><td>Single PWA web app, not native</td><td>Mobile-friendly, no Play Store delay, low data use, one codebase for shop plus admin</td></tr>
+<tr><td>Frontend</td><td>Next.js App Router plus Tailwind CSS</td><td>SEO for catalogue, route groups for shop and admin, PWA-ready, fast iteration</td></tr>
+<tr><td>Backend / Database</td><td>Supabase Postgres with Row Level Security</td><td>Transactions for reserve and release, isolates customer vs admin data, free-tier friendly</td></tr>
+<tr><td>Auth</td><td>Supabase Auth admin email plus password, customers by phone-link</td><td>Single admin for V1, customers identified by phone at checkout, no OTP</td></tr>
+<tr><td>Storage</td><td>product-images public, payment-proofs private with signed URLs</td><td>Fast product images, secure proofs for admin plus owner only</td></tr>
+<tr><td>Hosting</td><td>Vercel for app, Supabase for DB and storage and cron</td><td>Preview deploys, zero DevOps, scales for V1</td></tr>
+<tr><td>Mobile</td><td>PWA manifest, installable, 360px first</td><td>Owner and customers primarily on smartphones</td></tr>
+<tr><td>Rejected</td><td>Flutter / Firebase, WordPress / Woo</td><td>Native overhead, or hacky stockpile and fee and never-merge logic</td></tr>
+</table>
+
+<h2>2. Data and Domain Model</h2>
+<table><tr><th>Domain</th><th>Recommendation</th><th>Reason / Details</th></tr>
+<tr><td>Product</td><td>products table with name, description, base price NGN, status, fee override</td><td>Base listing, tags New Restocked OutOfStock Unavailable, bulky override</td></tr>
+<tr><td>Images</td><td>product-images table with URL and sort order, max 5MB compressed</td><td>Multiple ordered images</td></tr>
+<tr><td>Variants</td><td>variant-skus with attrs JSON, price, available, reserved, unique per product plus attrs</td><td>Stock belongs to combination e.g. Black plus 9 inch, zero stock equals disabled</td></tr>
+<tr><td>Add-ons</td><td>addons table, no stock in V1 e.g. Gift box 2000</td><td>Adds to total, avoids complexity</td></tr>
+<tr><td>Customers</td><td>customers with full name, phone unique normalized to +234, credit balance</td><td>Phone is V1 identity key</td></tr>
+<tr><td>Pending Orders</td><td>Pending Ref P-2026-0001 plus items plus payment submission</td><td>Pre-verification container, never fulfilable</td></tr>
+<tr><td>Confirmed Orders</td><td>Order LVS-0219 sequential from 219, totals, payment and fulfilment status, confirmed at, free until</td><td>Unique never-merge ID, full order record with price snapshot</td></tr>
+<tr><td>Store Credit</td><td>credit ledger with plus minus amounts, reason, admin actor</td><td>Audit trail for overpayment, cancellation, adjustments</td></tr>
+<tr><td>Settings</td><td>Bank details, global daily fee, fulfilment days, pickup note</td><td>All V1 tunables editable in UI</td></tr>
+</table>
+
+<h2>3. Core Business Logic</h2>
+<table><tr><th>Domain</th><th>Recommendation</th><th>Reason / Details</th></tr>
+<tr><td>Totals</td><td>Sum variant price times qty plus addons minus credit, integers in NGN</td><td>Auto calc, live cart total, no float errors</td></tr>
+<tr><td>Confirm</td><td>One DB transaction: insert order from pending, decrement available, increment reserved, notify</td><td>Atomic Confirm to ID to Reserve, abort on race</td></tr>
+<tr><td>Underpayment</td><td>No Order ID, show outstanding, one top-up linked, expire in 7 days to Rejected</td><td>Blocks processing, gives recovery path</td></tr>
+<tr><td>Overpayment</td><td>Confirm plus ID plus reserve, excess to auto credit unless over 50k for manual review</td><td>Meets policy, handles large cases</td></tr>
+<tr><td>Retaining Fee</td><td>Free until equals confirmed date Africa Lagos plus 14 days 23:59. Extra days times daily rate. Default 500 NGN per day, bulky e.g. freezer 2000</td><td>Per Order independent, transparent breakdown</td></tr>
+<tr><td>Release Rule</td><td>Block Ready and Out for Delivery if fee unpaid, fee keeps accruing</td><td>Enforces no-release rule</td></tr>
+<tr><td>Cancellation</td><td>Customer requests, admin approves only, paid converts to credit, stock returns, accrued fee due unless waived</td><td>No auto cash refund</td></tr>
+<tr><td>Recovery</td><td>Admin search by date amount ref phone, masked list, secondary checklist 4 of 6 must match then disclose</td><td>Manual 2-step, no OTP, no auto reveal</td></tr>
+</table>
+
+<h2>4. Storefront</h2>
+<table><tr><th>Domain</th><th>Recommendation</th><th>Reason / Details</th></tr>
+<tr><td>Catalogue</td><td>Mixed grid, image, name, from-price, status</td><td>See availability immediately</td></tr>
+<tr><td>Product Page</td><td>Variant pickers, disable zero stock, addon checkbox, Add stays on page</td><td>Correct variant selection</td></tr>
+<tr><td>Cart</td><td>Lines with variant, qty controls, live total, merge same variant</td><td>Monitor spending</td></tr>
+<tr><td>Checkout</td><td>Name, phone, pickup or delivery, conditional address fields, credit toggle, Expected Transfer</td><td>Complete fulfilment info upfront</td></tr>
+<tr><td>Pay</td><td>Show bank details, upload proof plus amount date time ref</td><td>External pay plus proof flow</td></tr>
+<tr><td>Track Orders</td><td>Lookup by phone plus Order ID, timeline, stockpile card with countdown and fee</td><td>Traceable bought to collected</td></tr>
+</table>
+
+<h2>5. Admin Console</h2>
+<table><tr><th>Domain</th><th>Recommendation</th><th>Reason / Details</th></tr>
+<tr><td>Dashboard</td><td>Queue Pending first with counts</td><td>Focus on verification</td></tr>
+<tr><td>Order Detail</td><td>Full record: customer, lines, fulfilment, expected vs submitted, proof, stockpile and fee</td><td>Single source of truth</td></tr>
+<tr><td>Verify</td><td>Confirm, Under, Over, Reject plus verified amount, audited</td><td>Manual authority, AI assist only</td></tr>
+<tr><td>Products</td><td>CRUD, images, variant price and stock, status tags</td><td>Owner manages without code</td></tr>
+<tr><td>Fees and Credit</td><td>Edit global and override fees, verify fee payments, manage credit ledger</td><td>Configurable and auditable</td></tr>
+<tr><td>Settings</td><td>Bank details, fulfilment days, fees, pickup note</td><td>No hard-code</td></tr>
+</table>
+
+<h2>6. Phases</h2>
+<table><tr><th>Domain</th><th>Recommendation</th><th>Reason / Details</th></tr>
+<tr><td>Phase 0 Setup</td><td>Init repo, Supabase buckets and RLS skeleton, Vercel preview, lock 12 rules</td><td>Runnable shell first</td></tr>
+<tr><td>Phase 1 Data</td><td>Migrations, seeds, unit tests for fees totals reserve</td><td>Prove hardest logic</td></tr>
+<tr><td>Phase 2 Shop</td><td>Catalogue to tracking</td><td>Customer value slice</td></tr>
+<tr><td>Phase 3 Admin</td><td>Queue to settings</td><td>Owner can operate end to end</td></tr>
+<tr><td>Phase 4 Harden</td><td>Notifications, cancel to credit, validation, security, mobile QA</td><td>Production ready, exclude future features</td></tr>
+<tr><td>Phase 5 Release</td><td>Acceptance checklist, time-travel fee test, 10-product pilot, handover doc</td><td>Sign-off and training</td></tr>
+</table>
+
+<h2>7. V1 Exclusions</h2>
+<table><tr><th>Domain</th><th>Recommendation</th><th>Reason / Details</th></tr>
+<tr><td>Delivery</td><td>Record only, fee handled manually</td><td>Auto calc is future</td></tr>
+<tr><td>Automation</td><td>No auto AI verify, no roles, no loyalty, no analytics, no promos</td><td>Avoid scope creep</td></tr>
+<tr><td>Catalogue</td><td>Basic grid only, defer search filters categories</td><td>Must not block basic shop</td></tr>
+</table>
+
+<div class="note">How to put in Google Docs: 1. This file is already open in your browser. Press Ctrl plus A, Ctrl plus C. 2. Go to docs.google.com, Blank document, Ctrl plus V. Tables paste as real Google Docs tables. No markdown symbols.</div>
+<p class="small">Files: REAL_IMPLEMENTATION_PLAN.md is source. This HTML is the Docs-ready visual version.</p>
+</body></html>
