@@ -10,6 +10,7 @@ export default function AdminSettings() {
     <div>Free hold days{num('freeHoldDays')}</div>
     <div>Overpayment review threshold{num('overpaymentThreshold')}</div>
     <div>Underpayment expiry days{num('underpaymentExpiryDays')}</div>
+    <div>Abandon days (fee unpaid + no contact){num('abandonDays')}</div>
     <div>Bank details (editable, no hard-code)<input value={s.bankDetails.bank} onChange={e=>setS({...s,bankDetails:{...s.bankDetails,bank:e.target.value}})} /></div>
     <div>Fulfilment days (editable)<input value={s.fulfilmentDays.join(',')} onChange={e=>setS({...s,fulfilmentDays:e.target.value.split(',')})} /></div>
     <button className="btn" onClick={save}>Save settings</button>

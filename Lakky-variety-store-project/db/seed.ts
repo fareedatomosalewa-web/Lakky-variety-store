@@ -11,5 +11,5 @@ export const seedAddons = [{ name: 'Gift box', price: 2000 }];
 export const seedSettings = {
   bankDetails: { bank: 'FILL-IN', accountNumber: 'FILL-IN', accountName: 'Lakky Variety Store' },
   globalDailyFee: 500, freeHoldDays: 14, overpaymentThreshold: 50000,
-  underpaymentExpiryDays: 7, fulfilmentDays: ['Mon', 'Thu', 'Sat'], pickupNote: 'Call before pickup',
+  underpaymentExpiryDays: 7, abandonDays: 60, fulfilmentDays: ['Mon', 'Thu', 'Sat'], pickupNote: 'FILL-IN — enter in Admin Settings',
 };

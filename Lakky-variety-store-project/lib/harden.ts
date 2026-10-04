@@ -8,14 +8,27 @@ export function pushNotice(type: string, message: string) {
 export function readNotices(): Notice[] {
   try { return JSON.parse(localStorage.getItem(KEY) || '[]'); } catch { return []; }
 }
-// Rate-limit order lookups: max 10 per minute per phone (free, in-memory)
+// Rate-limit order lookups: v1.2 = 5 wrong tries / hour / IP → lock 1 hr (free, in-memory)
+// Key = IP (caller passes IP; phone-based helper kept for backwards compat).
 const hits = new Map<string, number[]>();
+const WINDOW_MS = 60 * 60 * 1000;
+const MAX_TRIES = 5;
+function trackHit(key: string, now = Date.now()): { allowed: boolean; remaining: number } {
+  const arr = (hits.get(key) || []).filter(t => now - t < WINDOW_MS);
+  if (arr.length >= MAX_TRIES) return { allowed: false, remaining: 0 };
+  arr.push(now); hits.set(key, arr);
+  return { allowed: true, remaining: MAX_TRIES - arr.length };
+}
+export function trackAllowedByIP(ip: string, now = Date.now()): boolean {
+  return trackHit(`ip:${ip}`, now).allowed;
+}
 export function lookupAllowed(phone: string): boolean {
-  const now = Date.now();
-  const arr = (hits.get(phone) || []).filter(t => now - t < 60000);
-  if (arr.length >= 10) return false;
-  arr.push(now); hits.set(phone, arr);
-  return true;
+  // Backwards compat: old callers pass phone; enforce same 5/hour rule per key.
+  return trackHit(`phone:${phone}`).allowed;
+}
+export function last4Match(phone: string, last4: string): boolean {
+  const d = (phone || '').replace(/\D/g, '');
+  return d.slice(-4) === (last4 || '').replace(/\D/g, '');
 }
 export function normalizeNG(phone: string): string {
   const d = phone.replace(/\D/g, '');

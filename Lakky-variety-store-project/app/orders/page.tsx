@@ -9,6 +9,7 @@ export default function OrdersPage() {
     else setRes('No match. Check Order ID + phone.');
   };
   return (<div className="card"><h3>Track orders — ID + phone required</h3>
+    <div>Format: LVS-009-9270 (serial + last4 of phone). 5 wrong tries/hour/IP → locked 1 hr. Last4 search supported in admin.</div>
     <input placeholder="Order ID e.g. LVS-001" value={orderId} onChange={e=>setOrderId(e.target.value)} />
     <input placeholder="Phone used at checkout" value={phone} onChange={e=>setPhone(e.target.value)} />
     <button className="btn" onClick={lookup}>Track</button><div>{res}</div></div>);

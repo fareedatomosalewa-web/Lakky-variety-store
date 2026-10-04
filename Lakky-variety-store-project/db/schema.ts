@@ -70,6 +70,7 @@ export const pendingRefs = pgTable('pending_refs', {
   expectedTotal: integer('expected_total').notNull(),
   creditApplied: integer('credit_applied').default(0),
   status: text('status').default('pending'),
+  agreedAt: timestamp('agreed_at'),
   createdAt: timestamp('created_at').defaultNow(),
 });
 export const pendingItems = pgTable('pending_items', {
@@ -92,7 +93,7 @@ export const paymentSubmissions = pgTable('payment_submissions', {
   createdAt: timestamp('created_at').defaultNow(),
 });
 
-// Confirmed orders LVS-001...
+// Confirmed orders LVS-serial-last4 (v1.2). Retention: never delete, only status-change.
 export const orders = pgTable('orders', {
   id: serial('id').primaryKey(),
   orderNumber: integer('order_number').notNull().unique(),
@@ -108,6 +109,10 @@ export const orders = pgTable('orders', {
   confirmedAt: timestamp('confirmed_at').defaultNow(),
   freeUntil: date('free_until'),
   stockpileStatus: text('stockpile_status').default('held'),
+  agreedAt: timestamp('agreed_at'),
+  seenInBank: boolean('seen_in_bank').default(false),
+  abandoned: boolean('abandoned').default(false),
+  last4: text('last4'),
 });
 export const orderItems = pgTable('order_items', {
   id: serial('id').primaryKey(),
@@ -137,7 +142,7 @@ export const feePayments = pgTable('fee_payments', {
   verifiedBy: text('verified_by'),
 });
 
-// Configurable business rules — no hard-code
+// Configurable business rules — no hard-code. Bank/days/note only in DB, seed FILL-IN.
 export const settings = pgTable('settings', {
   id: serial('id').primaryKey(),
   bankDetails: jsonb('bank_details'),
@@ -145,6 +150,7 @@ export const settings = pgTable('settings', {
   freeHoldDays: integer('free_hold_days').default(14),
   overpaymentThreshold: integer('overpayment_threshold').default(50000),
   underpaymentExpiryDays: integer('underpayment_expiry_days').default(7),
+  abandonDays: integer('abandon_days').default(60),
   fulfilmentDays: jsonb('fulfilment_days'),
   pickupNote: text('pickup_note'),
 });
