@@ -6,3 +6,16 @@ out/
 uploads/
 *.log
 .DS_Store
+
+# v1.2 safety - NEVER push secrets / DB / backups / customer data (private repo still protected)
+.env
+!.env.example
+*.sql
+*.dump
+*.bak
+backups/
+db-backups/
+backup/
+customer-data/
+customers*.json
+customers*.csv
