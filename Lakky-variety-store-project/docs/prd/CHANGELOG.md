@@ -7,3 +7,4 @@ v1.2 → changed: Order ID LVS-001 → LVS-{serial}-{last4 phone}. Track lookup 
 v1.3 → slim top strip on / only (no landing page). / stays grid. Strip: how-it-works 3 steps + track link + WhatsApp from Settings + hold/fee/note from Settings, no hardcode. No rule/logic/table changes.
 v1.4 → Supabase pilot DB (Ireland pooler :6543). Fresh seed (no local copy). R2 kept. Local fallback kept. Secrets in .env.local only, never pushed.
 v1.5 → Group A money-safety verification (no code change): race-loss→credit, under-expired→credit, seen-in-bank, money rule. All checks PASS.
+v1.6 → Group B verification against real code: direct imports of lib/domain.ts + lib/harden.ts (21 asserts, no copies). Added canConfirm gate (same UI rules). All checks PASS.

@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { canConfirm } from '../../../../lib/domain';
 export default function AdminOrder({ params }: { params: { id: string } }) {
   const [o, setO] = useState<any>(null); const [verified, setVerified] = useState(''); const [msg, setMsg] = useState('');
   const [seenBank, setSeenBank] = useState(false);
@@ -10,8 +11,9 @@ export default function AdminOrder({ params }: { params: { id: string } }) {
   const act = (kind: string) => {
     const expected = Number(o.total || 0), paid = Number(o.amount || 0);
     if (kind === 'confirm') {
-      if (!seenBank) { setMsg('Blocked: tick Seen in bank (check bank app/SMS, NOT screenshot) before Confirm'); return; }
-      if (paid < expected) { setMsg(`Blocked: underpayment outstanding ₦${(expected - paid).toLocaleString()}`); return; }
+      const gate = canConfirm({ seenBank, paid, expected });
+      if (!gate.ok && gate.reason === 'seen-bank-required') { setMsg('Blocked: tick Seen in bank (check bank app/SMS, NOT screenshot) before Confirm'); return; }
+      if (!gate.ok) { setMsg(`Blocked: underpayment outstanding ₦${(expected - paid).toLocaleString()}`); return; }
       const n = Number(localStorage.getItem('lakky-order-seq') || '0') + 1;
       localStorage.setItem('lakky-order-seq', String(n));
       const last4 = String(o.phone || '').replace(/\D/g, '').slice(-4).padStart(4, '0');

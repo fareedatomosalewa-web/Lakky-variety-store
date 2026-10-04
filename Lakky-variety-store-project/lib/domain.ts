@@ -66,6 +66,14 @@ export function moneyRuleBalanced(received: number, confirmedTotal: number, cred
   return received === confirmedTotal + creditTotal;
 }
 
+// Confirm gate (same rules as Admin verify UI): seen-in-bank tick required, then full payment.
+// Returns { ok } or { ok:false, reason }. Tested directly by phase5-real-check.mjs.
+export function canConfirm(args: { seenBank: boolean; paid: number; expected: number }): { ok: boolean; reason: string } {
+  if (!args.seenBank) return { ok: false, reason: 'seen-bank-required' };
+  if (args.paid < args.expected) return { ok: false, reason: 'underpayment-outstanding' };
+  return { ok: true, reason: 'ready' };
+}
+
 // WhatsApp manual update link (₦0, no API, admin presses send)
 export function waUpdateLink(phone: string, orderId: string, status: string): string {
   const d = (phone || '').replace(/\D/g, '');
