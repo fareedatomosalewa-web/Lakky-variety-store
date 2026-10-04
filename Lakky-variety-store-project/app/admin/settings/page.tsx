@@ -1,10 +1,13 @@
 'use client';
 import { useState } from 'react';
 import { seedSettings } from '../../../db/seed';
+import { useAdminGuard } from '../../../lib/use-admin-guard';
 export default function AdminSettings() {
+  const allowed = useAdminGuard();
   const [s, setS] = useState<any>(seedSettings);
   const save = () => { localStorage.setItem('lakky-settings', JSON.stringify(s)); alert('Saved. All numeric rules editable, no hard-code. No rebuild needed.'); };
   const num = (k: string) => <input type="number" value={s[k]} onChange={e=>setS({...s,[k]:Number(e.target.value)})} />;
+  if (!allowed) return <div className="card">Checking admin session…</div>;
   return (<div className="card"><h3>Business Rules / Settings — PRD numbers are defaults only</h3>
     <div>Global daily fee (NGN){num('globalDailyFee')}</div>
     <div>Free hold days{num('freeHoldDays')}</div>

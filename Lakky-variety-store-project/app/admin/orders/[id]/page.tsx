@@ -1,7 +1,9 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { canConfirm } from '../../../../lib/domain';
+import { useAdminGuard } from '../../../../lib/use-admin-guard';
 export default function AdminOrder({ params }: { params: { id: string } }) {
+  const allowed = useAdminGuard();
   const [o, setO] = useState<any>(null); const [verified, setVerified] = useState(''); const [msg, setMsg] = useState('');
   const [seenBank, setSeenBank] = useState(false);
   useEffect(() => {
@@ -25,6 +27,7 @@ export default function AdminOrder({ params }: { params: { id: string } }) {
     if (kind === 'reject') setMsg('Rejected. No Order ID, no stock move.');
   };
   if (!o) return <div className="card">Order not found (submit proof first).</div>;
+  if (!allowed) return <div className="card">Checking admin session…</div>;
   return (<div className="card"><h3>Order {params.id} — full record</h3>
     <div>Customer: {o.name} • {o.phone} • {o.method} {o.area}</div>
     <div>Expected ₦{(o.total||0).toLocaleString()} vs Submitted ₦{o.amount} • Date {o.date} • Ref {o.ref}</div>

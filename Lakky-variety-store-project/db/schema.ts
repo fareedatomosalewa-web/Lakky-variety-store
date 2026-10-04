@@ -1,24 +1,54 @@
 import { pgTable, serial, text, integer, boolean, timestamp, date, jsonb, uniqueIndex } from 'drizzle-orm/pg-core';
 
-// Better Auth core (minimal email+password admin V1)
-export const users = pgTable('users', {
+// Better Auth core (v1.7 REAL wiring — email+password, single admin).
+// Column names follow better-auth conventions; role gates the admin console.
+export const users = pgTable('user', {
   id: text('id').primaryKey(),
+  name: text('name'),
   email: text('email').notNull().unique(),
   emailVerified: boolean('email_verified').default(false),
-  name: text('name'),
-  role: text('role').default('admin'),
+  image: text('image'),
+  role: text('role').default('customer'),
   createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
 });
-export const sessions = pgTable('sessions', {
+export const sessions = pgTable('session', {
   id: text('id').primaryKey(),
-  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   expiresAt: timestamp('expires_at').notNull(),
   token: text('token').notNull().unique(),
-});
-export const accounts = pgTable('accounts', {
-  id: text('id').primaryKey(),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+  ipAddress: text('ip_address'),
+  userAgent: text('user_agent'),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  passwordHash: text('password_hash'),
+});
+export const accounts = pgTable('account', {
+  id: text('id').primaryKey(),
+  accountId: text('account_id').notNull(),
+  providerId: text('provider_id').notNull(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  accessToken: text('access_token'),
+  refreshToken: text('refresh_token'),
+  idToken: text('id_token'),
+  accessTokenExpiresAt: timestamp('access_token_expires_at'),
+  refreshTokenExpiresAt: timestamp('refresh_token_expires_at'),
+  scope: text('scope'),
+  password: text('password'),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+});
+export const verifications = pgTable('verification', {
+  id: text('id').primaryKey(),
+  identifier: text('identifier').notNull(),
+  value: text('value').notNull(),
+  expiresAt: timestamp('expires_at').notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+});
+// Tiny admin key/value store (v1.7: recovery-key hash only). No business data.
+export const adminMeta = pgTable('admin_meta', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
 });
 
 // Catalogue

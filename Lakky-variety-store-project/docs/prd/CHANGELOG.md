@@ -8,3 +8,4 @@ v1.3 → slim top strip on / only (no landing page). / stays grid. Strip: how-it
 v1.4 → Supabase pilot DB (Ireland pooler :6543). Fresh seed (no local copy). R2 kept. Local fallback kept. Secrets in .env.local only, never pushed.
 v1.5 → Group A money-safety verification (no code change): race-loss→credit, under-expired→credit, seen-in-bank, money rule. All checks PASS.
 v1.6 → Group B verification against real code: direct imports of lib/domain.ts + lib/harden.ts (21 asserts, no copies). Added canConfirm gate (same UI rules). All checks PASS.
+v1.7 → real admin login (Better Auth + role gate, demo flag deleted) + RLS lockdown 22/22 with refusal proof. Honest DONE-DEMO/DONE-REAL rewrite. All checks PASS.
