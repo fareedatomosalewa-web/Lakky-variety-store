@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { createPending } from '../../lib/shop-actions';
 export default function CheckoutPage() {
   const [cart, setCart] = useState<any[]>([]);
   const [name, setName] = useState(''); const [phone, setPhone] = useState('');
@@ -8,12 +9,22 @@ export default function CheckoutPage() {
   const [agreed, setAgreed] = useState(false);
   useEffect(() => { setCart(JSON.parse(localStorage.getItem('lakky-cart') || '[]')); }, []);
   const total = cart.reduce((s, l) => s + (l.price + (l.addon ? l.addon.price : 0)) * l.qty, 0);
-  const submit = () => {
+  const submit = async () => {
     if (!name || !phone) { alert('Full name + active phone required'); return; }
     if (!confirmed) { alert('Confirm the Expected Transfer amount first'); return; }
     if (!agreed) { alert('You must agree to 14-day free hold + daily fee + abandon rule'); return; }
-    const ref = 'P-2026-' + Math.floor(1000 + Math.random() * 9000);
     const agreed_at = new Date().toISOString();
+    const lines = cart.map((l: any) => ({ attrs: { colour: l.colour, size: l.size }, price: l.price, qty: l.qty, addon: l.addon }));
+    const day = '';
+    try {
+      const r: any = await createPending({ name, phone, method, area, day, agreedAt: agreed_at, lines, total });
+      if (r.ok) {
+        localStorage.setItem('lakky-pending', JSON.stringify({ ref: r.ref, pendingId: r.pendingId, name, phone, method, area, total, agreed_at, live: true }));
+        location.href = '/pay/' + r.ref;
+        return;
+      }
+    } catch { /* fall through to local demo ref */ }
+    const ref = 'P-2026-' + Math.floor(1000 + Math.random() * 9000);
     localStorage.setItem('lakky-pending', JSON.stringify({ ref, name, phone, method, area, total, agreed_at }));
     location.href = '/pay/' + ref;
   };

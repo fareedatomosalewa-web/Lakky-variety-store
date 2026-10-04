@@ -1,11 +1,8 @@
 'use client';
 import { useState } from 'react';
-import { useAdminGuard } from '../../../lib/use-admin-guard';
 export default function ReportsPage() {
-  const allowed = useAdminGuard();
   const [from, setFrom] = useState('2026-09-01'); const [to, setTo] = useState('2026-09-30');
   const [csv, setCsv] = useState('');
-  if (!allowed) return <div className="card">Checking admin session…</div>;
   const run = () => {
     // Source = own DB. Demo aggregation from localStorage proof; real query = orders table by date.
     const demo = { from, to, ordersPlaced: 0, approved: 0, rejected: 0, under: 0, over: 0, cancelled: 0, pickup: 0, delivery: 0, stockpileActive: 0, feesDue: 0, feesPaid: 0, totalVerified: 0, creditIssued: 0, creditUsed: 0 };

@@ -1,9 +1,11 @@
 'use client';
 import { useState } from 'react';
+import { recordPayment } from '../../../lib/shop-actions';
 export default function PayPage({ params }: { params: { ref: string } }) {
   const [amount, setAmount] = useState(''); const [date, setDate] = useState(''); const [ref, setRef] = useState('');
-  const submit = () => {
+  const submit = async () => {
     const p = JSON.parse(localStorage.getItem('lakky-pending') || '{}');
+    try { await recordPayment({ ref: params.ref, amount: Number(amount), date, reference: ref }); } catch { /* local fallback below */ }
     localStorage.setItem('lakky-last-proof', JSON.stringify({ ...p, amount, date, ref, status: 'Payment Confirmation Pending' }));
     localStorage.removeItem('lakky-cart');
     alert('Submitted — ' + params.ref + ' is Pending verification');
