@@ -6,6 +6,8 @@ out/
 uploads/
 *.log
 .DS_Store
+*.tsbuildinfo
+next-env.d.ts
 
 # v1.2 safety - NEVER push secrets / DB / backups / customer data (private repo still protected)
 .env

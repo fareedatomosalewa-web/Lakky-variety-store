@@ -9,3 +9,4 @@ v1.4 → Supabase pilot DB (Ireland pooler :6543). Fresh seed (no local copy). R
 v1.5 → Group A money-safety verification (no code change): race-loss→credit, under-expired→credit, seen-in-bank, money rule. All checks PASS.
 v1.6 → Group B verification against real code: direct imports of lib/domain.ts + lib/harden.ts (21 asserts, no copies). Added canConfirm gate (same UI rules). All checks PASS.
 v1.7 → deadline slice: Settings + checkout pending + Confirm transaction + track, all Supabase-backed (docs/STATUS.md marks the DEMO remainder). E2E PASS, all suites PASS.
+v1.8 → step 1 done: v1.7 slice + REAL admin login live in UI (demo flag 0 refs), dev :3001 serves 200s, tsc clean, all suites PASS.

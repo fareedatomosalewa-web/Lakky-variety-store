@@ -1,8 +1,10 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { seedSettings } from '../../../db/seed';
+import { useAdminGuard } from '../../../lib/use-admin-guard';
 import { getSettings, saveSettings } from '../../../lib/shop-actions';
 export default function AdminSettings() {
+  const allowed = useAdminGuard();
   const [s, setS] = useState<any>(seedSettings);
   const [src, setSrc] = useState('local defaults');
   useEffect(() => {
@@ -20,6 +22,7 @@ export default function AdminSettings() {
     if (r.ok) setSrc('Supabase (live)');
   };
   const num = (k: string) => <input type="number" value={s[k]} onChange={e=>setS({...s,[k]:Number(e.target.value)})} />;
+  if (!allowed) return <div className="card">Checking admin session…</div>;
   return (<div className="card"><h3>Business Rules / Settings — PRD numbers are defaults only</h3>
     <div className="small">Source: {src}</div>
     <div>Global daily fee (NGN){num('globalDailyFee')}</div>
