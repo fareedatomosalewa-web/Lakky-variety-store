@@ -8,7 +8,14 @@ function loadEnv() {
     try {
       const t = fs.readFileSync(p, 'utf8');
       const m = t.match(/^DATABASE_URL=(.+)$/m);
-      if (m) { process.env.DATABASE_URL = m[1].trim().replace(/^"|"$/g, ''); return true; }
+      if (m) {
+        process.env.DATABASE_URL = m[1].trim().replace(/^"|"$/g, '');
+        for (const k of ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'BETTER_AUTH_SECRET']) {
+          const km = t.match(new RegExp('^' + k + '=(.+)$', 'm'));
+          if (km && !process.env[k]) process.env[k] = km[1].trim().replace(/^"|"$/g, '');
+        }
+        return true;
+      }
     } catch {}
   }
   return false;
@@ -29,9 +36,12 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
   });
   assert(pend.ok && pend.ref.startsWith('P-'), 'e2e: checkout created pending ' + (pend.ref || 'none') + ' in Supabase');
 
-  // Pay exact
-  const pay = await actions.recordPayment({ ref: pend.ref, amount: 12000, date: '2026-10-04', reference: 'E2E-' + stamp });
-  assert(pay.ok, 'e2e: payment submission recorded');
+  // Pay via receipt upload to the REAL private bucket (1px test image)
+  const tinyJpegBase64 = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////2wBDAf//////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAAAP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AK//9k=';
+  const pay = await actions.submitReceipt({ ref: pend.ref, amount: 12000, fileBase64: tinyJpegBase64, contentType: 'image/jpeg', ext: 'jpg' });
+  assert(pay.ok && !!pay.key, 'e2e: receipt saved to private bucket, key on submission');
+  const proof = await actions.getSubmissionProof({ ref: pend.ref });
+  assert(proof.ok && !!proof.url, 'e2e: admin gets signed receipt link');
 
   // Stock before
   const postgres = require('postgres');
@@ -59,8 +69,9 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
   await sql`update variant_skus set available = available + 1, reserved = reserved - 1 where id=${before[0].id}`;
   const restored = await sql`select available, reserved from variant_skus where id=${before[0].id}`;
   assert(restored[0].available === before[0].available && restored[0].reserved === before[0].reserved, 'e2e: stock restored, test rows removed');
-  const subs = await sql`select id, pending_id from payment_submissions where reference=${'E2E-' + stamp}`;
+  const subs = await sql`select id, pending_id, proof_url as "proofUrl" from payment_submissions where pending_id=${pend.pendingId}`;
   for (const s of subs) {
+    if (s.proofUrl) { try { await sql`delete from storage.objects where bucket_id='payment-proofs' and name=${s.proofUrl}`; } catch {} }
     await sql`delete from payment_submissions where id=${s.id}`;
     await sql`delete from pending_items where pending_id=${s.pending_id}`;
     await sql`delete from pending_refs where id=${s.pending_id}`;

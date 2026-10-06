@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { seedProducts, seedSettings } from '../db/seed';
+import { seedProducts, seedAddons, seedSettings } from '../db/seed';
 import { checkAdmin } from '../lib/admin-guard';
 const isSet = (v: unknown) => v !== undefined && v !== null && String(v).trim() !== '' && !String(v).includes('FILL-IN');
 export default function Home() {
@@ -29,9 +29,47 @@ export default function Home() {
       {isAdmin && missing.length > 0 && <div className="small">To-do (admin only): set {missing.join(', ')} in Admin Settings.</div>}
     </div>
     <h2>Mixed catalogue — no login needed</h2>
-    {seedProducts.map((p, i) => {
-      const from = Math.min(...p.variants.map(v => v.price));
-      return (<div className="card" key={i}><b>{p.name}</b> <span className="badge">New</span><div>From ₦{from.toLocaleString()}</div><a href={`/p/${i}`}>View variants →</a></div>);
-    })}
+    {seedProducts.map((p, i) => <ProductCard key={i} index={i} p={p as any} />)}
+  </div>);
+}
+
+function ProductCard({ index, p }: { index: number; p: any }) {
+  const [open, setOpen] = useState(false);
+  const [colour, setColour] = useState(p.variants[0].attrs.colour);
+  const [size, setSize] = useState(p.variants[0].attrs.size);
+  const [gift, setGift] = useState(false);
+  const [added, setAdded] = useState(false);
+  const from = Math.min(...p.variants.map((v: any) => v.price));
+  const match = p.variants.find((v: any) => v.attrs.colour === colour && v.attrs.size === size);
+  const colours: string[] = [...new Set((p.variants as any[]).map((v: any) => v.attrs.colour))];
+  const sizes: string[] = [...new Set((p.variants as any[]).map((v: any) => v.attrs.size))];
+  const add = () => {
+    if (!match || match.available <= 0) return;
+    let cart: any[] = [];
+    try { cart = JSON.parse(localStorage.getItem('lakky-cart') || '[]'); } catch { cart = []; }
+    const key = `${p.name}|${colour}|${size}|${gift ? 'gift' : 'no'}`;
+    const ex = cart.find((c) => c.key === key);
+    if (ex) ex.qty += 1;
+    else cart.push({ key, name: p.name, colour, size, price: match.price, addon: gift ? seedAddons[0] : null, qty: 1 });
+    localStorage.setItem('lakky-cart', JSON.stringify(cart));
+    window.dispatchEvent(new Event('lakky-cart-updated'));
+    setAdded(true);
+    setTimeout(() => setAdded(false), 2000);
+  };
+  return (<div className="card"><b>{p.name}</b> <span className="badge">New</span><div>From ₦{from.toLocaleString()}</div>
+    <button className="btn" onClick={() => setOpen(!open)}>{open ? 'Hide options' : 'Choose options'}</button>
+    {open && (<div style={{ marginTop: 8 }}>
+      <div className="small">Color</div>
+      <div>{colours.map((c) => <button key={c} onClick={() => setColour(c)} style={{ margin: 4, border: c === colour ? '2px solid #0F766E' : '1px solid #ccc', borderRadius: 8, padding: '6px 10px' }}>{c}</button>)}</div>
+      <div className="small">Size</div>
+      <div>{sizes.map((s) => {
+        const v = p.variants.find((x: any) => x.attrs.colour === colour && x.attrs.size === s);
+        const off = !v || v.available <= 0;
+        return <button key={s} disabled={off} onClick={() => setSize(s)} style={{ margin: 4, border: s === size ? '2px solid #0F766E' : '1px solid #ccc', borderRadius: 8, padding: '6px 10px', opacity: off ? 0.4 : 1 }}>{s}{off ? ' — 0 left' : ''}</button>;
+      })}</div>
+      <div><b>{match && match.available > 0 ? `₦${match.price.toLocaleString()} — ${match.available} left` : 'Not available in this combination'}</b></div>
+      <div><label><input type="checkbox" checked={gift} onChange={(e) => setGift(e.target.checked)} /> Gift box +₦{seedAddons[0].price.toLocaleString()}</label></div>
+      <button className="btn" disabled={!match || match.available <= 0} onClick={add}>{added ? 'Added ✓' : 'Add to Cart'}</button>
+    </div>)}
   </div>);
 }

@@ -1,15 +1,17 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { canConfirm } from '../../../../lib/domain';
-import { confirmOrder } from '../../../../lib/shop-actions';
+import { confirmOrder, getSubmissionProof } from '../../../../lib/shop-actions';
 import { useAdminGuard } from '../../../../lib/use-admin-guard';
 export default function AdminOrder({ params }: { params: { id: string } }) {
   const allowed = useAdminGuard();
   const [o, setO] = useState<any>(null); const [verified, setVerified] = useState(''); const [msg, setMsg] = useState('');
   const [seenBank, setSeenBank] = useState(false);
+  const [proofUrl, setProofUrl] = useState('');
   useEffect(() => {
     const p = JSON.parse(localStorage.getItem('lakky-last-proof') || '{}');
     setO(p.ref === params.id ? p : null);
+    getSubmissionProof({ ref: params.id }).then((r: any) => { if (r && r.ok && r.url) setProofUrl(r.url); }).catch(() => {});
   }, [params.id]);
   const act = async (kind: string) => {
     const expected = Number(o.total || 0), paid = Number(o.amount || 0);
@@ -41,6 +43,7 @@ export default function AdminOrder({ params }: { params: { id: string } }) {
     <div>Customer: {o.name} • {o.phone} • {o.method} {o.area}</div>
     <div>Expected ₦{(o.total||0).toLocaleString()} vs Submitted ₦{o.amount} • Date {o.date} • Ref {o.ref}</div>
     <div>Stockpile: confirmed date → free 14 days → fee 500/day (defaults, editable in Settings). Release blocked if fee unpaid.</div>
+    {proofUrl ? <div><div className="small">Customer receipt:</div><img src={proofUrl} alt="payment receipt" style={{ maxWidth: '100%', borderRadius: 10 }} /></div> : null}
     <div><input placeholder="Verified amount (admin)" value={verified} onChange={e=>setVerified(e.target.value)} /></div>
     <div><label><input type="checkbox" checked={seenBank} onChange={e=>setSeenBank(e.target.checked)} /> Seen in bank (bank app/SMS, NOT screenshot) — required</label></div>
     <button className="btn" onClick={() => act('confirm')}>Confirm</button> <button className="btn" onClick={() => act('under')}>Mark Under</button> <button className="btn" onClick={() => act('reject')}>Reject</button>

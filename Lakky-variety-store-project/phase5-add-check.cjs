@@ -45,8 +45,12 @@ assert(!isAbandoned(2500, 59, 60), '59 days → not abandoned yet');
 assert(!isAbandoned(0, 90, 60), 'no fee → never abandoned');
 
 // 7. agreed_at + seen-in-bank (check code wiring, not just functions)
-const checkoutSrc = fs.readFileSync(path.join(__dirname, 'app', 'checkout', 'page.tsx'), 'utf8');
-assert(checkoutSrc.includes('agreed') && checkoutSrc.includes('agreed_at'), 'checkout has agree checkbox + stores agreed_at');
+// v1.10: agreement lives on the pay page (two checkboxes + Read the rules); agreed_at stored by submitReceipt
+const paySrc = fs.readFileSync(path.join(__dirname, 'app', 'pay', '[ref]', 'page.tsx'), 'utf8');
+assert(paySrc.includes('agree to the rules') && paySrc.includes('transferred'), 'pay page has both agreement checkboxes');
+assert(paySrc.includes('/terms'), 'pay page links Read the rules → /terms');
+const actionsSrc = fs.readFileSync(path.join(__dirname, 'lib', 'shop-actions.ts'), 'utf8');
+assert(actionsSrc.includes('agreedAt: new Date()'), 'submitReceipt stores agreed_at on submit');
 const adminOrderSrc = fs.readFileSync(path.join(__dirname, 'app', 'admin', 'orders', '[id]', 'page.tsx'), 'utf8');
 assert(adminOrderSrc.includes('Seen in bank') && adminOrderSrc.includes('seenBank'), 'admin verify requires Seen in bank tick');
 assert(adminOrderSrc.includes('LVS-') && adminOrderSrc.includes('last4'), 'admin confirm uses LVS-serial-last4 format');

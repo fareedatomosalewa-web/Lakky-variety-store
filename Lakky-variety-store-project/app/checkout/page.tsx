@@ -1,40 +1,42 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { createPending } from '../../lib/shop-actions';
+import { seedSettings } from '../../db/seed';
 export default function CheckoutPage() {
   const [cart, setCart] = useState<any[]>([]);
   const [name, setName] = useState(''); const [phone, setPhone] = useState('');
   const [method, setMethod] = useState('Pickup'); const [area, setArea] = useState('');
-  const [confirmed, setConfirmed] = useState(false);
-  const [agreed, setAgreed] = useState(false);
-  useEffect(() => { setCart(JSON.parse(localStorage.getItem('lakky-cart') || '[]')); }, []);
+  const [day, setDay] = useState('');
+  const [days, setDays] = useState<string[]>((seedSettings as any).fulfilmentDays || []);
+  useEffect(() => {
+    setCart(JSON.parse(localStorage.getItem('lakky-cart') || '[]'));
+    try {
+      const raw = JSON.parse(localStorage.getItem('lakky-settings') || 'null');
+      if (raw && raw.fulfilmentDays) setDays(raw.fulfilmentDays);
+    } catch { /* seed defaults */ }
+  }, []);
   const total = cart.reduce((s, l) => s + (l.price + (l.addon ? l.addon.price : 0)) * l.qty, 0);
   const submit = async () => {
-    if (!name || !phone) { alert('Full name + active phone required'); return; }
-    if (!confirmed) { alert('Confirm the Expected Transfer amount first'); return; }
-    if (!agreed) { alert('You must agree to 14-day free hold + daily fee + abandon rule'); return; }
-    const agreed_at = new Date().toISOString();
+    if (!name || !phone) { alert('Please type your full name and an active phone number.'); return; }
     const lines = cart.map((l: any) => ({ attrs: { colour: l.colour, size: l.size }, price: l.price, qty: l.qty, addon: l.addon }));
-    const day = '';
     try {
-      const r: any = await createPending({ name, phone, method, area, day, agreedAt: agreed_at, lines, total });
+      const r: any = await createPending({ name, phone, method, area, day, agreedAt: '', lines, total });
       if (r.ok) {
-        localStorage.setItem('lakky-pending', JSON.stringify({ ref: r.ref, pendingId: r.pendingId, name, phone, method, area, total, agreed_at, live: true }));
+        localStorage.setItem('lakky-pending', JSON.stringify({ ref: r.ref, pendingId: r.pendingId, name, phone, method, area, day, total, live: true }));
         location.href = '/pay/' + r.ref;
         return;
       }
     } catch { /* fall through to local demo ref */ }
     const ref = 'P-2026-' + Math.floor(1000 + Math.random() * 9000);
-    localStorage.setItem('lakky-pending', JSON.stringify({ ref, name, phone, method, area, total, agreed_at }));
+    localStorage.setItem('lakky-pending', JSON.stringify({ ref, name, phone, method, area, day, total }));
     location.href = '/pay/' + ref;
   };
-  return (<div className="card"><h3>Checkout — Expected Transfer ₦{total.toLocaleString()}</h3>
-    <div>14-day free hold, then daily fee. Fee unpaid + no contact 60 days = flagged Abandoned (admin decides, never automatic).</div>
+  return (<div className="card"><h3>Checkout — you will pay ₦{total.toLocaleString()} on the next page</h3>
     <input placeholder="Full name" value={name} onChange={e=>setName(e.target.value)} />
-    <input placeholder="Active phone +234..." value={phone} onChange={e=>setPhone(e.target.value)} />
+    <input placeholder="Active phone number, like +234..." value={phone} onChange={e=>setPhone(e.target.value)} />
     <select value={method} onChange={e=>setMethod(e.target.value)}><option>Pickup</option><option>Delivery</option></select>
-    {method==='Delivery' && <input placeholder="Location/area + address + landmark" value={area} onChange={e=>setArea(e.target.value)} />}
-    <label><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)} /> I confirm I will transfer exactly ₦{total.toLocaleString()}</label><br/>
-    <label><input type="checkbox" checked={agreed} onChange={e=>setAgreed(e.target.checked)} /> I agree to 14-day free hold + daily fee + abandon rule</label><br/>
+    {method==='Delivery' && <input placeholder="Area, address and a landmark near you" value={area} onChange={e=>setArea(e.target.value)} />}
+    <div className="small">Preferred day</div>
+    <select value={day} onChange={e=>setDay(e.target.value)}><option value="">Any day is fine</option>{days.map((d) => <option key={d} value={d}>{d}</option>)}</select>
     <button className="btn" onClick={submit}>Continue to payment →</button></div>);
 }

@@ -68,7 +68,7 @@ export async function createPending(args: {
       ref, customerId,
       fulfilment: { method: args.method, area: args.area, day: args.day },
       expectedTotal: args.total, creditApplied: args.creditApplied || 0,
-      status: 'pending', agreedAt: new Date(args.agreedAt),
+      status: 'pending', agreedAt: args.agreedAt ? new Date(args.agreedAt) : null,
     } as any).returning({ id: pendingRefs.id });
     const pendingId = (prow as any[])[0].id;
     for (const l of args.lines) {
@@ -84,8 +84,7 @@ export async function createPending(args: {
   } catch { return { ok: false as const }; }
 }
 
-export async function recordPayment(args: { ref: string; amount: number; date: string; time?: string; reference?: string }) {
-  try {
+export async function recordPayment(args: { ref: string; amount: number; date: string; time?: string; reference?: string }) {  try {
     const p = await db.select().from(pendingRefs).limit(1000);
     const hit = (p as any[]).find((r) => r.ref === args.ref);
     if (!hit) return { ok: false as const };
@@ -171,8 +170,7 @@ export async function trackOrder(args: { displayId: string; phone: string }) {
     const order = all.find((o) => String(o.displayId).toUpperCase() === id);
     if (!order) return { ok: false as const };
     const cust = ((await db.select().from(customers).limit(5000)) as any[]).find((c) => c.id === order.customerId);
-    if (!cust || normalizePhone(cust.phone) !== phone) return { ok: false as const };
-    const sets = await db.select().from(settings).limit(1);
+    if (!cust || normalizePhone(cust.phone) !== phone) return { ok: false as const };    const sets = await db.select().from(settings).limit(1);
     const rate = (sets[0] as any)?.globalDailyFee ?? 500;
     const today = lagosToday();
     const freeUntil = String(order.freeUntil || '').slice(0, 10);
@@ -187,5 +185,54 @@ export async function trackOrder(args: { displayId: string; phone: string }) {
         confirmedAt: order.confirmedAt, freeUntil, extraDays, fee: extraDays * rate, rate,
       },
     };
+  } catch { return { ok: false as const }; }
+}
+
+// ---- Receipt upload: bytes go to private Supabase Storage, key saved on the submission ----
+export async function submitReceipt(args: { ref: string; amount: number; fileBase64: string | null; contentType: string; ext: string }) {
+  try {
+    const all = (await db.select().from(pendingRefs).limit(5000)) as any[];
+    const pend = all.find((r) => r.ref === args.ref);
+    if (!pend) return { ok: false as const, reason: 'not-found' };
+    let key: string | null = null;
+    if (args.fileBase64) {
+      const { uploadReceipt } = await import('./storage');
+      const up = await uploadReceipt(Buffer.from(args.fileBase64, 'base64'), args.contentType || 'image/jpeg', args.ext || 'jpg');
+      if (!up.ok || !up.key) return { ok: false as const, reason: 'upload-failed' };
+      key = up.key;
+    } else if (args.amount > 0) {
+      return { ok: false as const, reason: 'receipt-required' };
+    }
+    await db.insert(paymentSubmissions).values({
+      pendingId: pend.id, amountClaimed: args.amount,
+      transferDate: lagosToday(), proofUrl: key, status: 'pending',
+    } as any);
+    await db.update(pendingRefs).set({ agreedAt: new Date() } as any).where(eq(pendingRefs.id, pend.id));
+    return { ok: true as const, key };
+  } catch { return { ok: false as const, reason: 'error' }; }
+}
+
+// ---- Admin: short-lived signed link to view a receipt (never public) ----
+export async function getReceiptUrl(args: { key: string }) {
+  try {
+    if (!args.key) return { ok: false as const };
+    const { receiptViewUrl } = await import('./storage');
+    return await receiptViewUrl(args.key);
+  } catch { return { ok: false as const }; }
+}
+
+// ---- Admin: latest receipt for a pending ref (image + verified box stay together) ----
+export async function getSubmissionProof(args: { ref: string }) {
+  try {
+    const all = (await db.select().from(pendingRefs).limit(5000)) as any[];
+    const pend = all.find((r) => r.ref === args.ref);
+    if (!pend) return { ok: false as const };
+    const subs = ((await db.select().from(paymentSubmissions).limit(500)) as any[]).filter((s) => s.pendingId === pend.id);
+    if (!subs.length) return { ok: false as const };
+    const last = subs[subs.length - 1];
+    if (!last.proofUrl) return { ok: true as const, amount: last.amountClaimed, url: null };
+    const { receiptViewUrl } = await import('./storage');
+    const v = await receiptViewUrl(last.proofUrl);
+    return { ok: true as const, amount: last.amountClaimed, url: v.ok ? v.url : null, key: last.proofUrl };
   } catch { return { ok: false as const }; }
 }
