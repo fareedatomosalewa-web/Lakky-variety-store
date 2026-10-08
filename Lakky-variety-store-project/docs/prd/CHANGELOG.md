@@ -13,3 +13,4 @@ v1.8 → step 1 done: v1.7 slice + REAL admin login live in UI (demo flag 0 refs
 v1.9 → UI cleanup only: strip hides unset values (admin-only to-do), quiet Add to Cart + badge, alert list documented. All checks PASS.
 v1.10 → wording + pay flow: inline options, plain-English checkout/pay, receipts in private Storage, /terms, refund plan only. E2E + all suites PASS.
 v1.11 → brand redesign: plum/cream tokens, DM Sans, nav + search + categories + featured/new/wholesale/footer, 8-product catalogue. Logic unchanged. All checks PASS.
+v1.12 → real 12-product catalogue (sheet + Drive photos, dynamic categories, generic pickers, fallbacks) + netlify.toml. All checks + e2e PASS.

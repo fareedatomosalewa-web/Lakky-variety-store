@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { seedProducts, seedAddons } from '../../../db/seed';
+import { FALLBACK_DESCRIPTION, driveImage, seedAddons, seedProducts } from '../../../db/seed';
 function loadCart(): any[] { try { return JSON.parse(localStorage.getItem('lakky-cart') || '[]'); } catch { return []; } }
 function saveCart(cart: any[]) {
   localStorage.setItem('lakky-cart', JSON.stringify(cart));
@@ -8,31 +8,42 @@ function saveCart(cart: any[]) {
 }
 export default function ProductPage({ params }: { params: { id: string } }) {
   const p: any = (seedProducts as any[])[Number(params.id)];
-  const [colour, setColour] = useState(p.variants[0].attrs.colour);
-  const [size, setSize] = useState(p.variants[0].attrs.size);
+  const dims: string[] = p ? [...new Set((p.variants as any[]).flatMap((v: any) => Object.keys(v.attrs)))] : [];
+  const [sel, setSel] = useState<Record<string, string>>(() => Object.fromEntries(dims.map((d) => [d, p.variants[0].attrs[d]])));
   const [addon, setAddon] = useState(false);
   const [added, setAdded] = useState(false);
-  if (!p) return <div>Not found</div>;
-  const colours: string[] = [...new Set((p.variants as any[]).map((v: any) => v.attrs.colour))];
-  const sizes: string[] = [...new Set((p.variants as any[]).map((v: any) => v.attrs.size))];
-  const match = p.variants.find(v => v.attrs.colour === colour && v.attrs.size === size);
+  const [imgErr, setImgErr] = useState(false);
+  if (!p) return <div className="empty">That product is gone. <a href="/#shop">Back to the shop →</a></div>;
+  const match = p.variants.find((v: any) => dims.every((d) => String(v.attrs[d]) === String(sel[d])));
+  const desc = p.description && String(p.description).trim() ? p.description : FALLBACK_DESCRIPTION;
   const add = () => {
-    if (!match || match.available <= 0) { alert('Variant unavailable'); return; }
+    if (!match || match.available <= 0) { alert('That option is not available right now.'); return; }
     const cart = loadCart();
-    const key = `${p.name}|${colour}|${size}|${addon ? 'gift' : 'no'}`;
-    const ex = cart.find(c => c.key === key);
-    if (ex) ex.qty += 1; else cart.push({ key, name: p.name, colour, size, price: match.price, addon: addon ? seedAddons[0] : null, qty: 1 });
+    const label = dims.map((d) => match.attrs[d]).join(' / ');
+    const key = `${p.name}|${label}|${addon ? 'gift' : 'no'}`;
+    const ex = cart.find((c) => c.key === key);
+    if (ex) ex.qty += 1;
+    else cart.push({ key, name: p.name, attrs: match.attrs, colour: match.attrs.colour, size: match.attrs.size, price: match.price, addon: addon ? seedAddons[0] : null, qty: 1 });
     saveCart(cart);
     setAdded(true);
     setTimeout(() => setAdded(false), 2000);
   };
   return (<div className="card">
-    <div className="prod-img">{p.emoji || '🛍️'}</div>
+    {p.driveId && !imgErr
+      ? <div className="prod-img" style={{ padding: 0, overflow: 'hidden', height: 220 }}><img src={driveImage(p.driveId)} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={() => setImgErr(true)} /></div>
+      : <div className="prod-img" style={{ height: 220 }}>{p.emoji || '🛍️'}</div>}
     <div>{p.badge === 'NEW' ? <span className="badge badge-new">NEW</span> : null}{p.status === 'Restocked' ? <span className="badge">Restocked</span> : null}</div>
-    <h3>{p.name}</h3><div className="small">{p.category} • {p.description}</div>
-    <div>Color: {colours.map(c => <button key={c} onClick={() => setColour(c)} style={{margin:4,border:c===colour?'2px solid #5A2948':'1px solid #EBDDD2',borderRadius:8,padding:'6px 10px',background:'#fff'}}>{c}</button>)}</div>
-    <div>Size: {sizes.map(s => <button key={s} onClick={() => setSize(s)} style={{margin:4,border:s===size?'2px solid #5A2948':'1px solid #EBDDD2',borderRadius:8,padding:'6px 10px',background:'#fff'}}>{s}</button>)}</div>
-    <div>{match ? (match.available > 0 ? <b>₦{match.price.toLocaleString()} — {match.available} left</b> : <b style={{color:'#B94A48'}}>Unavailable combination</b>) : <b style={{color:'#B94A48'}}>Unavailable combination</b>}</div>
-    <label><input type="checkbox" checked={addon} onChange={e => setAddon(e.target.checked)} /> Gift box +₦{seedAddons[0].price.toLocaleString()}</label><br/>
+    <h2>{p.name}</h2><div className="small">{desc}</div>
+    {dims.map((d) => {
+      const opts: string[] = [...new Set((p.variants as any[]).map((v: any) => String(v.attrs[d])))];
+      if (opts.length < 2) return null;
+      return (<div key={d}><div className="small">{d === 'Colour' ? 'Color' : d}</div><div>{opts.map((o) => {
+        const v = p.variants.find((x: any) => dims.every((dd) => dd === d ? String(x.attrs[dd]) === o : String(x.attrs[dd]) === String(sel[dd])));
+        const off = !v || v.available <= 0;
+        return <button key={o} disabled={off} onClick={() => setSel((s) => ({ ...s, [d]: o }))} style={{ margin: 4, border: sel[d] === o ? '2px solid #5A2948' : '1px solid #EBDDD2', borderRadius: 8, padding: '6px 10px', opacity: off ? 0.4 : 1, background: '#fff' }}>{o}{off ? ' — 0 left' : ''}</button>;
+      })}</div></div>);
+    })}
+    <div><b>{match ? (match.available > 0 ? `₦${match.price.toLocaleString()} — ${match.available} left` : 'Not available in this combination') : 'Not available in this combination'}</b></div>
+    <label><input type="checkbox" checked={addon} onChange={(e) => setAddon(e.target.checked)} /> Gift box +₦{seedAddons[0].price.toLocaleString()}</label><br/>
     <button className="btn" onClick={add}>{added ? 'Added ✓' : 'Add to Cart'}</button></div>);
 }

@@ -18,7 +18,7 @@ export default function CheckoutPage() {
   const total = cart.reduce((s, l) => s + (l.price + (l.addon ? l.addon.price : 0)) * l.qty, 0);
   const submit = async () => {
     if (!name || !phone) { alert('Please type your full name and an active phone number.'); return; }
-    const lines = cart.map((l: any) => ({ attrs: { colour: l.colour, size: l.size }, price: l.price, qty: l.qty, addon: l.addon }));
+    const lines = cart.map((l: any) => ({ attrs: l.attrs || { colour: l.colour, size: l.size }, price: l.price, qty: l.qty, addon: l.addon }));
     try {
       const r: any = await createPending({ name, phone, method, area, day, agreedAt: '', lines, total });
       if (r.ok) {
