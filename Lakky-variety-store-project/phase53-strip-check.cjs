@@ -3,7 +3,7 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exit(1);
 const fs = require('fs');
 const path = require('path');
 const src = fs.readFileSync(path.join(__dirname, 'app', 'page.tsx'), 'utf8');
-assert(src.includes('How it works') && src.includes('Upload proof'), 'strip shows 3 steps choose → pay → upload proof');
+assert(src.includes('How it works') && src.includes('Upload your receipt'), 'strip shows 3 steps choose → pay → upload receipt');
 assert(src.includes('/orders') && src.includes('Track your order'), 'strip links Track your order → /orders');
 assert(src.includes('wa.me') && src.includes('waNumber'), 'strip WhatsApp wa.me uses number from Settings');
 assert(src.includes('freeHoldDays') && src.includes('globalDailyFee') && src.includes('pickupNote'), 'strip reads hold days, fee, pickup note from Settings');

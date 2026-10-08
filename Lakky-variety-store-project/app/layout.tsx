@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
-import CartBadge from './cart-badge';
-export const metadata: Metadata = { title: 'Lakky Variety Store', description: 'Mobile-first catalogue + orders', manifest: '/manifest.json' };
+import { BottomNav, SiteHeader } from './site-nav';
+export const metadata: Metadata = { title: 'Lakky Variety Store', description: 'Something for every day.', manifest: '/manifest.json' };
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  return (<html lang="en"><body style={{margin:0,fontFamily:'Inter,Arial',background:'#F8FAFC'}}><header style={{background:'#0F766E',color:'#fff',padding:'12px 16px',position:'sticky',top:0}}><b>Lakky Variety Store</b> <a href="/cart" style={{color:'#fff',float:'right'}}>Cart 🛒 <CartBadge /></a></header><main style={{maxWidth:720,margin:'0 auto',padding:12}}>{children}</main></body></html>);
+  return (<html lang="en"><head><link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" /><link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet" /></head><body><SiteHeader /><main className="pagewrap">{children}<BottomNav /></main></body></html>);
 }

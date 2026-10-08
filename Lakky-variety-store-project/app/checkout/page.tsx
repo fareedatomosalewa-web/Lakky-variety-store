@@ -31,7 +31,7 @@ export default function CheckoutPage() {
     localStorage.setItem('lakky-pending', JSON.stringify({ ref, name, phone, method, area, day, total }));
     location.href = '/pay/' + ref;
   };
-  return (<div className="card"><h3>Checkout — you will pay ₦{total.toLocaleString()} on the next page</h3>
+  return (<div className="card"><h2>Checkout — you will pay ₦{total.toLocaleString()} on the next page</h2>
     <input placeholder="Full name" value={name} onChange={e=>setName(e.target.value)} />
     <input placeholder="Active phone number, like +234..." value={phone} onChange={e=>setPhone(e.target.value)} />
     <select value={method} onChange={e=>setMethod(e.target.value)}><option>Pickup</option><option>Delivery</option></select>
@@ -40,3 +40,4 @@ export default function CheckoutPage() {
     <select value={day} onChange={e=>setDay(e.target.value)}><option value="">Any day is fine</option>{days.map((d) => <option key={d} value={d}>{d}</option>)}</select>
     <button className="btn" onClick={submit}>Continue to payment →</button></div>);
 }
+

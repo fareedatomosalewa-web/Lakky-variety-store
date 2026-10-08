@@ -73,10 +73,10 @@ export default function PayPage({ params }: { params: { ref: string } }) {
     localStorage.removeItem('lakky-cart');
     setDone(true); setSending(false);
   };
-  if (done) return (<div className="card"><h3>Thank you! We got it.</h3>
+  if (done) return (<div className="card"><h2>Thank you! We got it.</h2>
     <div>Your reference: <b>{params.ref}</b> <button className="btn" onClick={() => copyText(params.ref, () => { setCopied(true); setTimeout(() => setCopied(false), 2000); })}>{copied ? 'Copied ✓' : 'Copy'}</button></div>
     <div><a href="/orders">Track your order →</a></div></div>);
-  return (<div className="card"><h3>Pay {params.ref}</h3>
+  return (<div className="card"><h2>Pay {params.ref}</h2>
     <div><b>Amount to pay: ₦{total.toLocaleString()}</b></div>
     <div className="small">Bank: {bank.bank} • Account number: {bank.accountNumber} • Name: {bank.accountName}</div>
     <div>Your reference: <b>{params.ref}</b> <button className="btn" onClick={() => copyText(params.ref, () => { setCopied(true); setTimeout(() => setCopied(false), 2000); })}>{copied ? 'Copied ✓' : 'Copy'}</button></div>

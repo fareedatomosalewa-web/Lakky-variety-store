@@ -26,10 +26,13 @@ export default function ProductPage({ params }: { params: { id: string } }) {
     setAdded(true);
     setTimeout(() => setAdded(false), 2000);
   };
-  return (<div className="card"><h3>{p.name}</h3>
-    <div>Colour: {colours.map(c => <button key={c} onClick={() => setColour(c)} style={{margin:4,border:c===colour?'2px solid #0F766E':'1px solid #ccc',borderRadius:8,padding:'6px 10px'}}>{c}</button>)}</div>
-    <div>Size: {sizes.map(s => <button key={s} onClick={() => setSize(s)} style={{margin:4,border:s===size?'2px solid #0F766E':'1px solid #ccc',borderRadius:8,padding:'6px 10px'}}>{s}</button>)}</div>
-    <div>{match ? (match.available > 0 ? <b>₦{match.price.toLocaleString()} — {match.available} left</b> : <b style={{color:'red'}}>Unavailable combination</b>) : <b style={{color:'red'}}>Unavailable combination</b>}</div>
+  return (<div className="card">
+    <div className="prod-img">{p.emoji || '🛍️'}</div>
+    <div>{p.badge === 'NEW' ? <span className="badge badge-new">NEW</span> : null}{p.status === 'Restocked' ? <span className="badge">Restocked</span> : null}</div>
+    <h3>{p.name}</h3><div className="small">{p.category} • {p.description}</div>
+    <div>Color: {colours.map(c => <button key={c} onClick={() => setColour(c)} style={{margin:4,border:c===colour?'2px solid #5A2948':'1px solid #EBDDD2',borderRadius:8,padding:'6px 10px',background:'#fff'}}>{c}</button>)}</div>
+    <div>Size: {sizes.map(s => <button key={s} onClick={() => setSize(s)} style={{margin:4,border:s===size?'2px solid #5A2948':'1px solid #EBDDD2',borderRadius:8,padding:'6px 10px',background:'#fff'}}>{s}</button>)}</div>
+    <div>{match ? (match.available > 0 ? <b>₦{match.price.toLocaleString()} — {match.available} left</b> : <b style={{color:'#B94A48'}}>Unavailable combination</b>) : <b style={{color:'#B94A48'}}>Unavailable combination</b>}</div>
     <label><input type="checkbox" checked={addon} onChange={e => setAddon(e.target.checked)} /> Gift box +₦{seedAddons[0].price.toLocaleString()}</label><br/>
     <button className="btn" onClick={add}>{added ? 'Added ✓' : 'Add to Cart'}</button></div>);
 }

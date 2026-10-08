@@ -10,9 +10,10 @@ export default function NoticesPage() {
     localStorage.setItem('lakky-cancel-req', JSON.stringify({ ...p, status: 'cancel-requested' }));
     alert('Cancellation requested. Admin approves → paid converts to Store Credit (non-cashable), stock returns.');
   };
-  return (<div><h3>Notifications + Cancellation</h3>
+  return (<div><h2>Notifications + Cancellation</h2>
     <button className="btn" onClick={cancel}>Request cancellation (customer)</button>
     {list.length === 0 && <div className="card">No notifications yet. Events: pending, confirmed, under/over, packed, ready, fee approaching/started.</div>}
     {list.map((n, i) => <div className="card" key={i}><b>{n.type}</b> {n.message}<div>{n.at}</div></div>)}
   </div>);
 }
+

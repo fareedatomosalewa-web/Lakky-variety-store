@@ -8,7 +8,7 @@ export default async function TermsPage() {
     if (r.ok) s = { ...seedSettings, ...r.settings };
   } catch { /* seed defaults */ }
   const hold = s.freeHoldDays, fee = Number(s.globalDailyFee).toLocaleString(), abandon = s.abandonDays;
-  return (<div className="card"><h3>Our rules (plain words)</h3>
+  return (<div className="card"><h2>Our rules (plain words)</h2>
     <p>1. Pay the exact amount shown, to the bank account shown. Then upload your receipt.</p>
     <p>2. Your reference. After you order, you get a reference like P-2026-0004. Writing it in your bank's remark box is your choice, but it helps. If there is a problem, we can find your order fast. If you pay by USSD or your bank has no remark box, that's fine. Always keep your receipt.</p>
     <p>3. We confirm your payment when we see the money in our bank. Then you get your Order ID.</p>
@@ -19,3 +19,4 @@ export default async function TermsPage() {
     <p>8. If your item runs out before we confirm your payment, you choose: store credit for your next order, or a refund. A refund goes only to the same bank account you paid from. If you give a different account, we cannot refund you.</p>
   </div>);
 }
+
