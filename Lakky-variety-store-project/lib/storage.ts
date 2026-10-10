@@ -8,11 +8,11 @@ function cfg() {
   return { url, key };
 }
 
-export async function uploadReceipt(bytes: Buffer, contentType: string, ext: string): Promise<{ ok: boolean; key?: string }> {
+export async function uploadReceipt(bytes: Buffer, contentType: string, ext: string, bucket = 'payment-proofs'): Promise<{ ok: boolean; key?: string }> {
   try {
     const { url, key } = cfg();
     const name = `${Date.now()}-${Math.floor(Math.random() * 1e6)}.${ext}`;
-    const res = await fetch(`${url}/storage/v1/object/payment-proofs/${name}`, {
+    const res = await fetch(`${url}/storage/v1/object/${bucket}/${name}`, {
       method: 'POST',
       headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': contentType, 'x-upsert': 'false' },
       body: bytes as unknown as BodyInit,
@@ -22,10 +22,10 @@ export async function uploadReceipt(bytes: Buffer, contentType: string, ext: str
   } catch { return { ok: false }; }
 }
 
-export async function receiptViewUrl(key: string): Promise<{ ok: boolean; url?: string }> {
+export async function receiptViewUrl(key: string, bucket = 'payment-proofs'): Promise<{ ok: boolean; url?: string }> {
   try {
     const { url, key: skey } = cfg();
-    const res = await fetch(`${url}/storage/v1/object/sign/payment-proofs/${key}`, {
+    const res = await fetch(`${url}/storage/v1/object/sign/${bucket}/${key}`, {
       method: 'POST',
       headers: { apikey: skey, Authorization: `Bearer ${skey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ expiresIn: 900 }),

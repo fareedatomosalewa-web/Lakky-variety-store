@@ -499,7 +499,7 @@ export async function addMedia(args: { productName: string; fileBase64: string; 
     const n = await sql`select count(*)::int as n from product_images where product_id=${p[0].id}`;
     if (n[0].n >= 4) { await sql.end(); return { ok: false as const }; }
     const { uploadReceipt } = await import('./storage');
-    const up = await uploadReceipt(Buffer.from(args.fileBase64, 'base64'), args.contentType, args.ext, 'product-images');
+    const up = await uploadReceipt(Buffer.from(args.fileBase64, 'base64'), args.contentType, args.ext);
     if (!up.ok || !up.key) { await sql.end(); return { ok: false as const }; }
     await sql`insert into product_images (product_id, url, sort) values (${p[0].id}, ${up.key}, ${n[0].n})`;
     await sql.end();
