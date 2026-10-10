@@ -77,6 +77,8 @@ function ProductCard({ p }: { p: any }) {
   const match = multi
     ? p.variants.find((v: any) => dims.every((d) => String(v.attrs[d]) === String(sel[d])))
     : p.variants[0];
+  const lowStock = Math.min(...p.variants.map((v: any) => v.available));
+  const showFew = p.lowStockThreshold !== undefined && p.lowStockThreshold !== null && lowStock <= p.lowStockThreshold;
   const add = (v: any) => {
     if (!v || v.available <= 0) return;
     let cart: any[] = [];
@@ -93,7 +95,7 @@ function ProductCard({ p }: { p: any }) {
   };
   return (<div className="prod-card">
     <ProductImage p={p} />
-    <div>{p.badge === 'NEW' ? <span className="badge badge-new">NEW</span> : null}{p.status === 'Restocked' ? <span className="badge">Restocked</span> : null}</div>
+    <div>{p.badge === 'NEW' ? <span className="badge badge-new">NEW</span> : null}{p.status === 'Restocked' ? <span className="badge">Restocked</span> : null}{showFew ? <span className="badge badge-sale">Few pieces left</span> : null}</div>
     <div className="prod-name">{p.name}</div>
     <div className="small">{descOf(p)}</div>
     <div className="prod-price">₦{from.toLocaleString()}</div>
@@ -106,10 +108,10 @@ function ProductCard({ p }: { p: any }) {
         return (<div key={d}><div className="small">{d}</div><div>{opts.map((o) => {
           const v = p.variants.find((x: any) => dims.every((dd) => dd === d ? String(x.attrs[dd]) === o : String(x.attrs[dd]) === String(sel[dd])));
           const off = !v || v.available <= 0;
-          return <button key={o} disabled={off} onClick={() => setSel((s) => ({ ...s, [d]: o }))} style={{ margin: 4, border: sel[d] === o ? '2px solid #5A2948' : '1px solid #EBDDD2', borderRadius: 8, padding: '6px 10px', opacity: off ? 0.4 : 1, background: '#fff' }}>{o}{off ? ' — 0 left' : ''}</button>;
+          return <button key={o} disabled={off} onClick={() => setSel((s) => ({ ...s, [d]: o }))} style={{ margin: 4, border: sel[d] === o ? '2px solid #5A2948' : '1px solid #EBDDD2', borderRadius: 8, padding: '6px 10px', opacity: off ? 0.4 : 1, background: '#fff' }}>{o}{off ? ' — sold out' : ''}</button>;
         })}</div></div>);
       })}
-      <div><b>{match && match.available > 0 ? `₦${match.price.toLocaleString()} — ${match.available} left` : 'Not available in this combination'}</b></div>
+      <div><b>{match && match.available > 0 ? `₦${match.price.toLocaleString()}` : 'Not available in this combination'}</b></div>
       <div><label><input type="checkbox" checked={gift} onChange={(e) => setGift(e.target.checked)} /> Gift box +₦{seedAddons[0].price.toLocaleString()}</label></div>
       <button className="btn" style={{ width: '100%' }} disabled={!match || match.available <= 0} onClick={() => add(match)}>{added ? 'Added ✓' : 'Add to Cart'}</button>
     </div>)}
