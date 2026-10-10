@@ -152,7 +152,12 @@ export async function confirmOrder(args: { pendingRef: string; verifiedAmount: n
         } as any);
       }
       await tx.update(pendingRefs).set({ status: 'confirmed' } as any).where(eq(pendingRefs.id, pend.id));
-      return { ok: true as const, displayId, over: paid > expected ? paid - expected : 0 };
+      const over = paid > expected ? paid - expected : 0;
+      if (over > 0) {
+        await tx.execute(dsql`insert into credit_ledger (customer_id, order_id, amount, reason) values (${pend.customerId}, ${orderId}, ${over}, 'overpayment auto-credit')`);
+        await tx.execute(dsql`update customers set credit_balance = coalesce(credit_balance,0) + ${over} where id = ${pend.customerId}`);
+      }
+      return { ok: true as const, displayId, over };
     });
   } catch (e: any) {
     if (String(e?.message).includes('race-lost')) return { ok: false as const, reason: 'race-lost' };
@@ -180,7 +185,7 @@ export async function trackOrder(args: { displayId: string; phone: string }) {
     return {
       ok: true as const,
       order: {
-        displayId: order.displayId, status: order.paymentStatus, fulfilment: order.fulfilmentStatus,
+        id: order.id, displayId: order.displayId, status: order.paymentStatus, fulfilment: order.fulfilmentStatus,
         total: order.total, paid: order.paidAmount,
         confirmedAt: order.confirmedAt, freeUntil, extraDays, fee: extraDays * rate, rate,
       },
@@ -189,7 +194,7 @@ export async function trackOrder(args: { displayId: string; phone: string }) {
 }
 
 // ---- Receipt upload: bytes go to private Supabase Storage, key saved on the submission ----
-export async function submitReceipt(args: { ref: string; amount: number; fileBase64: string | null; contentType: string; ext: string }) {
+export async function submitReceipt(args: { ref: string; amount: number; fileBase64: string | null; contentType: string; ext: string; bankRef?: string }) {
   try {
     const all = (await db.select().from(pendingRefs).limit(5000)) as any[];
     const pend = all.find((r) => r.ref === args.ref);
@@ -205,7 +210,7 @@ export async function submitReceipt(args: { ref: string; amount: number; fileBas
     }
     await db.insert(paymentSubmissions).values({
       pendingId: pend.id, amountClaimed: args.amount,
-      transferDate: lagosToday(), proofUrl: key, status: 'pending',
+      transferDate: lagosToday(), proofUrl: key, reference: args.bankRef || null, status: 'pending',
     } as any);
     await db.update(pendingRefs).set({ agreedAt: new Date() } as any).where(eq(pendingRefs.id, pend.id));
     return { ok: true as const, key };

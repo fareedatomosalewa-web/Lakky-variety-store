@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { getSettings, submitReceipt } from '../../../lib/shop-actions';
+import { ensureReference } from '../../../lib/shop-v1';
 import { seedSettings } from '../../../db/seed';
 
 function copyText(t: string, done: () => void) {
@@ -42,10 +43,14 @@ export default function PayPage({ params }: { params: { ref: string } }) {
   const [fileErr, setFileErr] = useState('');
   const [box1, setBox1] = useState(false); const [box2, setBox2] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedAcct, setCopiedAcct] = useState(false);
+  const [refId, setRefId] = useState('');
+  const [typedRef, setTypedRef] = useState('');
   const [done, setDone] = useState(false);
   const [sending, setSending] = useState(false);
   useEffect(() => {
     setP(JSON.parse(localStorage.getItem('lakky-pending') || '{}'));
+    ensureReference({ pendingRef: params.ref }).then((r: any) => { if (r.ok) setRefId(r.referenceId); }).catch(() => {});
     getSettings().then((r: any) => { if (r.ok) setS({ ...seedSettings, ...r.settings }); });
     try {
       const raw = JSON.parse(localStorage.getItem('lakky-settings') || 'null');
@@ -66,7 +71,7 @@ export default function PayPage({ params }: { params: { ref: string } }) {
     if (!canSubmit) return;
     setSending(true);
     try {
-      const r: any = await submitReceipt({ ref: params.ref, amount: total, fileBase64: file ? file.base64 : null, contentType: file ? file.type : '', ext: file ? file.ext : '' });
+      const r: any = await submitReceipt({ ref: params.ref, amount: total, fileBase64: file ? file.base64 : null, contentType: file ? file.type : '', ext: file ? file.ext : '', bankRef: typedRef });
       if (!r.ok) { setSending(false); return; }
     } catch { /* fall through to local confirmation */ }
     localStorage.setItem('lakky-last-proof', JSON.stringify({ ...p, amount: total, status: 'Payment Confirmation Pending' }));
@@ -78,9 +83,11 @@ export default function PayPage({ params }: { params: { ref: string } }) {
     <div><a href="/orders">Track your order →</a></div></div>);
   return (<div className="card"><h2>Pay {params.ref}</h2>
     <div><b>Amount to pay: ₦{total.toLocaleString()}</b></div>
-    <div className="small">Bank: {bank.bank} • Account number: {bank.accountNumber} • Name: {bank.accountName}</div>
-    <div>Your reference: <b>{params.ref}</b> <button className="btn" onClick={() => copyText(params.ref, () => { setCopied(true); setTimeout(() => setCopied(false), 2000); })}>{copied ? 'Copied ✓' : 'Copy'}</button></div>
+    <div className="small">Bank: {bank.bank} • Account number: {bank.accountNumber} <button className="btn-s" onClick={() => copyText(String(bank.accountNumber || ''), () => { setCopiedAcct(true); setTimeout(() => setCopiedAcct(false), 2000); })}>{copiedAcct ? 'Copied ✓' : 'Copy'}</button> • Name: {bank.accountName}</div>
+    <div className="small"><b>Pay ONLY to the account shown on this screen. Our details can change. Do not use a saved beneficiary.</b></div>
+    <div>Your reference: <b>{refId || params.ref}</b> <button className="btn" onClick={() => copyText(refId || params.ref, () => { setCopied(true); setTimeout(() => setCopied(false), 2000); })}>{copied ? 'Copied ✓' : 'Copy'}</button></div>
     <div className="small">Writing this reference in your bank's remark box is optional, but it helps us find your order fast. If you pay by USSD or your bank has no remark box, that's fine.</div>
+    <input placeholder="Reference from your bank receipt (optional, you can paste it)" value={typedRef} onChange={(e) => setTypedRef(e.target.value)} />
     <div className="small">Upload your receipt (photo, up to 5MB)</div>
     <input type="file" accept="image/*" onChange={(e) => onFile(e.target.files?.[0])} />
     <div className="small">A screenshot of your bank app, your bank's SMS alert, or a clear photo of the receipt all work.</div>
