@@ -34,7 +34,7 @@ export default function Home() {
   const fresh = (seedProducts as any[]).filter((p) => (p.status === 'New' || p.status === 'Restocked') && matches(p));
   return (<div>
     <div className="hero"><h1>Something for every day.</h1><p>Fine things for skin, home, school and style. Pay by bank transfer. Pick up or get delivery.</p><a className="btn" href="#shop" style={{ textDecoration: 'none' }}>Shop now</a></div>
-    <div className="searchbar"><input placeholder="Search products…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+    <div className="searchbar"><input placeholder="Search products… try face masks" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} /><button className="btn-s" onClick={() => document.getElementById('shop')?.scrollIntoView()} aria-label="Search">🔍</button></div>
     <h2 id="categories">Categories</h2>
     <div className="catchips">{['All', ...allCats].map((c) => <button key={c} className={cat === c ? 'on' : ''} onClick={() => setCat(c)}>{c}</button>)}</div>
     <div className="strip">
