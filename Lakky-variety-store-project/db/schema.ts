@@ -60,6 +60,14 @@ export const products = pgTable('products', {
   status: text('status').default('New'),
   active: boolean('active').default(true),
   feeOverride: integer('fee_override'),
+  lowStockThreshold: integer('low_stock_threshold'),
+  wholesaleTiers: jsonb('wholesale_tiers'),
+  restockedAt: timestamp('restocked_at'),
+  discountType: text('discount_type'),
+  discountValue: integer('discount_value'),
+  discountStart: timestamp('discount_start'),
+  discountEnd: timestamp('discount_end'),
+  newTagDays: integer('new_tag_days'),
 });
 export const productImages = pgTable('product_images', {
   id: serial('id').primaryKey(),
@@ -83,11 +91,13 @@ export const addons = pgTable('addons', {
   active: boolean('active').default(true),
 });
 
-// Customers: phone = contact/matching ID, NOT auth
+// Customers: accounts (name, phone, email, password) since owner decision
 export const customers = pgTable('customers', {
   id: serial('id').primaryKey(),
   fullName: text('full_name').notNull(),
   phone: text('phone').notNull().unique(),
+  email: text('email'),
+  passwordHash: text('password_hash'),
   creditBalance: integer('credit_balance').default(0),
 });
 
@@ -95,10 +105,12 @@ export const customers = pgTable('customers', {
 export const pendingRefs = pgTable('pending_refs', {
   id: serial('id').primaryKey(),
   ref: text('ref').notNull().unique(),
+  referenceId: text('reference_id').unique(),
   customerId: integer('customer_id').references(() => customers.id),
   fulfilment: jsonb('fulfilment'),
   expectedTotal: integer('expected_total').notNull(),
   creditApplied: integer('credit_applied').default(0),
+  couponCode: text('coupon_code'),
   status: text('status').default('pending'),
   agreedAt: timestamp('agreed_at'),
   createdAt: timestamp('created_at').defaultNow(),
@@ -183,6 +195,22 @@ export const settings = pgTable('settings', {
   abandonDays: integer('abandon_days').default(60),
   fulfilmentDays: jsonb('fulfilment_days'),
   pickupNote: text('pickup_note'),
+  stockpileFeePerDay: integer('stockpile_fee_per_day').default(50),
+  maxStockpileDays: integer('max_stockpile_days').default(60),
+  creditCashMinimum: integer('credit_cash_minimum').default(5000),
+  restockTagDays: integer('restock_tag_days').default(2),
+  newTagDays: integer('new_tag_days').default(7),
+  reportWindowHours: integer('report_window_hours').default(48),
+  reminderFirstDays: integer('reminder_first_days').default(2),
+  reminderEveryDays: integer('reminder_every_days').default(2),
+  pickupLocation: text('pickup_location').default(''),
+  pickupReveal: boolean('pickup_reveal').default(false),
+  shopHours: text('shop_hours').default(''),
+  announcementOn: boolean('announcement_on').default(false),
+  announcementText: text('announcement_text').default(''),
+  socialLinks: jsonb('social_links').default([]),
+  aboutText: text('about_text').default(''),
+  helpText: text('help_text').default(''),
 });
 export const notifications = pgTable('notifications', {
   id: serial('id').primaryKey(),

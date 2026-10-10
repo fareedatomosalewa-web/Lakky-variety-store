@@ -30,10 +30,14 @@ export default function CheckoutPage() {
   const shortcuts = ['Today', 'Tomorrow', 'Day after tomorrow'];
   const submit = async () => {
     if (!name || !phone) { alert('Please type your full name and an active phone number.'); return; }
+    if (method === 'Pickup' && day && !['Today', 'Tomorrow', 'Day after tomorrow', ''].includes(day)) {
+      alert('Pickup must be within 1 week. For a later date, please choose Stockpile at the top.');
+      return;
+    }
     if (method === 'Stockpile' && !day) { alert('Please pick a fulfilment date for stockpile.'); }
     const lines = cart.map((l: any) => ({ attrs: l.attrs || { colour: l.colour, size: l.size }, price: l.price, qty: l.qty, addon: l.addon }));
     try {
-      const r: any = await createPending({ name, phone, method, area, day, agreedAt: '', lines, total });
+      const r: any = await createPending({ name, phone, method, area, day, agreedAt: '', lines, total, creditApplied: quote ? quote.used : 0, couponCode: coupon || undefined });
       if (r.ok) {
         localStorage.setItem('lakky-pending', JSON.stringify({ ref: r.ref, pendingId: r.pendingId, name, phone, method, area, day, total, creditUsed: quote ? quote.used : 0, coupon, live: true }));
         location.href = '/pay/' + r.ref;

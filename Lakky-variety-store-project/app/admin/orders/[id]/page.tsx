@@ -6,7 +6,7 @@ import { useAdminGuard } from '../../../../lib/use-admin-guard';
 import { getOrderThread, getPendingDetail, listFees, listRefunds, decideRefund, markFeePaid, markPartial, postMessage, rejectPending } from '../../../../lib/shop-v1';
 const REJECTS = ['Underpayment', 'Fake receipt', 'Wrong order', 'Other'];
 export default function AdminOrder({ params }: { params: { id: string } }) {
-  const allowed = useAdminGuard();
+  const allowed = useAdminGuard(['admin', 'staff']);
   const [o, setO] = useState<any>(null); const [verified, setVerified] = useState(''); const [msg, setMsg] = useState('');
   const [seenBank, setSeenBank] = useState(false);
   const [proofUrl, setProofUrl] = useState('');

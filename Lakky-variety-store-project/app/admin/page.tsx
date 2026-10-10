@@ -1,16 +1,17 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useAdminGuard } from '../../lib/use-admin-guard';
-import { listPending, adminSearch, setProgress, dashboard, exportCsv, remindersDue, listFees } from '../../lib/shop-v1';
+import { listPending, adminSearch, setProgress, dashboard, exportCsv, remindersDue, listFees, agedStockpile, releaseStockpile } from '../../lib/shop-v1';
 const NEXTS: Record<string, string> = { pending: 'confirmed', confirmed: 'packaged', packaged: 'onway', onway: 'ready', ready: 'completed' };
 export default function AdminDash() {
-  const allowed = useAdminGuard();
+  const allowed = useAdminGuard(['admin', 'staff']);
   const [items, setItems] = useState<any[]>([]);
   const [sel, setSel] = useState<number[]>([]);
   const [q, setQ] = useState(''); const [found, setFound] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [remind, setRemind] = useState<any[]>([]);
   const [fees, setFees] = useState<any[]>([]);
+  const [aged, setAged] = useState<any[]>([]);
   const load = async () => {
     const r: any = await listPending().catch(() => null);
     if (r && r.ok) setItems(r.rows);
@@ -20,6 +21,8 @@ export default function AdminDash() {
     if (rm && rm.ok) setRemind(rm.due);
     const f: any = await listFees({}).catch(() => null);
     if (f && f.ok) setFees(f.rows);
+    const ag: any = await agedStockpile().catch(() => null);
+    if (ag && ag.ok) setAged(ag.aged);
   };
   useEffect(() => { if (allowed) load(); }, [allowed]);
   if (!allowed) return <div className="card">Checking admin session…</div>;
@@ -43,7 +46,7 @@ export default function AdminDash() {
   };
   return (<div><h2>Admin queue — all pending first</h2>
     {stats && <div className="card small">Today sales ₦{Number(stats.salesToday).toLocaleString()} • open orders {stats.openOrders} • stockpiled {stats.stockpiled} • store credit owed ₦{Number(stats.creditOwed).toLocaleString()}</div>}
-    <div><a href="/admin/products">Products</a> | <a href="/admin/settings">Settings / Business Rules</a> | <a href="/admin/reports">Reports + CSV</a></div>
+    <div><a href="/admin/products">Products</a> | <a href="/admin/settings">Settings / Business Rules</a> | <a href="/admin/reports">Reports + CSV</a> | <a href="/admin/customers">Customers + activity</a> | <a href="/admin/staff">Staff</a></div>
     <div className="card"><b>Search</b> by Order ID, Reference ID, name or phone<div style={{ display: 'flex', gap: 8 }}><input placeholder="LVS-… / REF-… / name / phone" value={q} onChange={(e) => setQ(e.target.value)} /><button className="btn-s" onClick={search}>Search</button></div>
       {found.map((o) => <div key={o.id} className="small"><a href={`/admin/orders/${o.referenceId || o.displayId}`}>{o.displayId}</a> • {o.name} • {o.phone} • {o.pay} • {o.st}</div>)}</div>
     <div className="card"><b>Bulk progress ({sel.length} picked)</b><div>{['packaged', 'onway', 'ready', 'completed'].map((t) => <button key={t} className="btn-s" style={{ marginRight: 6 }} onClick={() => bulk(t)}>→ {t}</button>)}</div></div>
@@ -52,5 +55,6 @@ export default function AdminDash() {
     <div className="card"><b>Exports</b> <button className="btn-s" onClick={() => csv('orders')}>Orders CSV</button> <button className="btn-s" onClick={() => csv('customers')}>Customers CSV</button></div>
     {remind.length > 0 && <div className="card"><b>Not-completed reminders due ({remind.length})</b>{remind.map((o: any) => <div key={o.id} className="small">{o.displayId} • {o.st} — remind customer + owner</div>)}</div>}
     {fees.length > 0 && <div className="card"><b>Stockpile fee payments ({fees.length})</b>{fees.slice(0, 20).map((f: any) => <div key={f.id} className="small">#{f.id} {f.displayId} ₦{Number(f.amount).toLocaleString()} [{f.status}]</div>)}</div>}
+    {aged.length > 0 && <div className="card"><b>Past max stockpile days ({aged.length}) — contact first, then release</b>{aged.map((o: any) => <div key={o.id} className="small">{o.displayId} • {o.name} • uncollected {o.days} days (max {o.maxd}) <button className="btn-d" onClick={async () => { await releaseStockpile({ orderId: o.id, actor: 'owner' }); load(); }}>Release to stock</button></div>)}</div>}
   </div>);
 }

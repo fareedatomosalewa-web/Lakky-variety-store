@@ -4,19 +4,12 @@
 // cancel, notifications, reviews, problems, wishlist, accounts, staff, exports.
 import postgres from 'postgres';
 import crypto from 'crypto';
+import { makeRef } from './pricing';
 
 function conn() {
   const url = process.env.DATABASE_URL || '';
   if (!url) throw new Error('no-db');
   return postgres(url, { prepare: false });
-}
-
-const REFCHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-export function makeRef(): string {
-  let s = 'REF-';
-  const b = crypto.randomBytes(6);
-  for (let i = 0; i < 6; i++) s += REFCHARS[b[i] % REFCHARS.length];
-  return s;
 }
 function hashPw(pw: string, salt: string): string {
   return crypto.scryptSync(pw, salt, 64).toString('hex');
@@ -151,6 +144,35 @@ export async function getOrderThread(args: { ref: string }) {
     await sql.end();
     return { ok: true as const, orderId, messages };
   } catch { return { ok: false as const, orderId: null, messages: [] as any[] }; }
+}
+
+// ---- stockpile aged past max days: contact + release back to sale ----
+export async function agedStockpile() {
+  try {
+    const sql = conn();
+    const s = await sql`select max_stockpile_days as maxd from settings limit 1`;
+    const maxd = Number(s[0]?.maxd ?? 60);
+    const rows = await sql`select o.id, o.display_id as "displayId", o.confirmed_at as "at", c.full_name as name from orders o left join customers c on c.id=o.customer_id where o.stockpile_status='held' and o.fulfilment_status not in ('completed','cancelled')`;
+    const now = Date.now();
+    const aged = (rows as any[]).filter((o) => Math.floor((now - new Date(o.at).getTime()) / 86400000) > maxd)
+      .map((o) => ({ ...o, days: Math.floor((now - new Date(o.at).getTime()) / 86400000), maxd }));
+    await sql.end();
+    return { ok: true as const, aged };
+  } catch { return { ok: false as const, aged: [] as any[] }; }
+}
+export async function releaseStockpile(args: { orderId: number; actor?: string }) {
+  try {
+    const sql = conn();
+    const items = await sql`select variant_sku_id as "sku", qty from order_items where order_id=${args.orderId}`;
+    for (const it of items as any[]) {
+      if (it.sku) await sql`update variant_skus set reserved = reserved - ${it.qty}, available = available + ${it.qty} where id=${it.sku}`;
+    }
+    await sql`update orders set stockpile_status='released', fulfilment_status='cancelled' where id=${args.orderId}`;
+    await sql`insert into order_messages (order_id, sender, text) values (${args.orderId}, 'owner', 'Order left uncollected past max days, returned to stock. Contact admin for details.')`;
+    await sql`insert into order_events (order_id, actor, action) values (${args.orderId}, ${args.actor || 'owner'}, 'stockpile-released')`;
+    await sql.end();
+    return { ok: true as const };
+  } catch { return { ok: false as const }; }
 }
 
 // ---- credit-first quote: whole balance applied first, remainder to pay ----
@@ -376,20 +398,195 @@ export async function resetCustomerPassword(args: { customerId: number; newPassw
   } catch { return { ok: false as const }; }
 }
 
-// ---- catalogue helpers: discounts, wholesale price, coupons, media ----
-export function discountFor(p: any, now = new Date()) {
-  if (!p || !p.discount_value) return null;
-  if (p.discount_start && new Date(p.discount_start) > now) return null;
-  if (p.discount_end && new Date(p.discount_end) < now) return null;
-  return p;
-}
-export function tierPrice(tiers: any, qty: number, base: number): number {
+// ---- catalogue helpers live in ./pricing (plain module, no "use server") ----
+
+// ---- admin catalogue: edit product, coupons, media ----
+export async function getProductAdmin(args: { name: string }) {
   try {
-    const list = (typeof tiers === 'string' ? JSON.parse(tiers) : tiers) || [];
-    let price = base;
-    for (const t of list) if (qty >= Number(t.min) && (t.max === undefined || qty <= Number(t.max))) price = Number(t.each);
-    return price;
-  } catch { return base; }
+    const sql = conn();
+    const p = await sql`select * from products where name=${args.name} limit 1`;
+    if (!p.length) { await sql.end(); return { ok: false as const }; }
+    const variants = await sql`select * from variant_skus where product_id=${p[0].id} order by id`;
+    const paddons = await sql`select * from product_addons where product_id=${p[0].id} order by id`;
+    const media = await sql`select * from product_images where product_id=${p[0].id} order by sort limit 4`;
+    await sql.end();
+    return { ok: true as const, product: p[0], variants, addons: paddons, media };
+  } catch { return { ok: false as const }; }
+}
+export async function saveProductAdmin(args: { name: string; patch: any; variants?: any[] }) {
+  try {
+    const sql = conn();
+    const p = await sql`select id from products where name=${args.name} limit 1`;
+    if (!p.length) { await sql.end(); return { ok: false as const }; }
+    const id = p[0].id;
+    const allowed = ['base_price', 'status', 'active', 'fee_override', 'low_stock_threshold', 'wholesale_tiers', 'discount_type', 'discount_value', 'discount_start', 'discount_end', 'new_tag_days'] as const;
+    for (const k of allowed) {
+      const v = (args.patch || {})[k];
+      if (v !== undefined) await sql.unsafe(`update products set ${k} = $1 where id = $2`, [k === 'wholesale_tiers' && typeof v !== 'string' ? JSON.stringify(v) : v, id]);
+    }
+    if (args.patch?.markRestocked) await sql`update products set restocked_at = now(), status='Restocked' where id=${id}`;
+    for (const v of args.variants || []) {
+      await sql`update variant_skus set price=${v.price}, available=${v.available}, active=${v.active !== false} where id=${v.id} and product_id=${id}`;
+    }
+    await sql.end();
+    return { ok: true as const };
+  } catch { return { ok: false as const }; }
+}
+export async function listCoupons() {
+  try {
+    const sql = conn();
+    const rows = await sql`select * from coupons order by code`;
+    await sql.end();
+    return { ok: true as const, rows };
+  } catch { return { ok: false as const, rows: [] as any[] }; }
+}
+export async function createCoupon(args: { code: string; percent: number; expiry?: string; limit: number }) {
+  try {
+    const sql = conn();
+    const code = String(args.code || '').trim().toUpperCase();
+    if (!code || !args.percent || !args.limit) { await sql.end(); return { ok: false as const }; }
+    await sql`insert into coupons (code, percent, expiry, usage_limit, used) values (${code}, ${args.percent}, ${args.expiry || null}, ${args.limit}, 0) on conflict (code) do nothing`;
+    await sql.end();
+    return { ok: true as const };
+  } catch { return { ok: false as const }; }
+}
+export async function listDiscounted() {
+  try {
+    const sql = conn();
+    const rows = await sql`select * from products where discount_value is not null and (discount_start is null or discount_start <= now()) and (discount_end is null or discount_end >= now()) and active != false order by name limit 200`;
+    await sql.end();
+    return { ok: true as const, rows };
+  } catch { return { ok: false as const, rows: [] as any[] }; }
+}
+export async function getMedia(args: { productId?: number; productName?: string }) {
+  try {
+    const sql = conn();
+    let pid = args.productId;
+    if (!pid && args.productName) {
+      const p = await sql`select id from products where name=${args.productName} limit 1`;
+      if (p.length) pid = p[0].id;
+    }
+    if (!pid) { await sql.end(); return { ok: true as const, rows: [] as any[] }; }
+    const rows = await sql`select * from product_images where product_id=${pid} order by sort limit 4`;
+    await sql.end();
+    const base = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
+    const withUrls = (rows as any[]).map((m) => ({
+      ...m,
+      url: String(m.url).startsWith('http') ? m.url : `${base}/storage/v1/object/public/product-images/${m.url}`,
+    }));
+    return { ok: true as const, rows: withUrls };
+  } catch { return { ok: false as const, rows: [] as any[] }; }
+}
+// ---- per-product add-ons (own price + stock; global gift box is the fallback) ----
+export async function listAddons(args: { productName: string }) {
+  try {
+    const sql = conn();
+    const p = await sql`select id from products where name=${args.productName} limit 1`;
+    if (!p.length) { await sql.end(); return { ok: true as const, rows: [] as any[] }; }
+    const rows = await sql`select * from product_addons where product_id=${p[0].id} and active != false order by id`;
+    await sql.end();
+    return { ok: true as const, rows };
+  } catch { return { ok: false as const, rows: [] as any[] }; }
+}
+
+// ---- product media upload (owner phone; photos + ≤20MB video, view-only links) ----
+export async function addMedia(args: { productName: string; fileBase64: string; contentType: string; ext: string; kind: string }) {
+  try {
+    if (Buffer.from(args.fileBase64, 'base64').length > 20 * 1024 * 1024) return { ok: false as const };
+    const sql = conn();
+    const p = await sql`select id from products where name=${args.productName} limit 1`;
+    if (!p.length) { await sql.end(); return { ok: false as const }; }
+    const n = await sql`select count(*)::int as n from product_images where product_id=${p[0].id}`;
+    if (n[0].n >= 4) { await sql.end(); return { ok: false as const }; }
+    const { uploadReceipt } = await import('./storage');
+    const up = await uploadReceipt(Buffer.from(args.fileBase64, 'base64'), args.contentType, args.ext, 'product-images');
+    if (!up.ok || !up.key) { await sql.end(); return { ok: false as const }; }
+    await sql`insert into product_images (product_id, url, sort) values (${p[0].id}, ${up.key}, ${n[0].n})`;
+    await sql.end();
+    return { ok: true as const };
+  } catch { return { ok: false as const }; }
+}
+export async function mediaViewUrl(args: { key: string }) {
+  try {
+    const { receiptViewUrl } = await import('./storage');
+    return await receiptViewUrl(args.key, 'product-images');
+  } catch { return { ok: false as const }; }
+}
+export async function addAddon(args: { productName: string; name: string; price: number; stock: number }) {
+  try {
+    const sql = conn();
+    const p = await sql`select id from products where name=${args.productName} limit 1`;
+    if (!p.length || !args.name) { await sql.end(); return { ok: false as const }; }
+    await sql`insert into product_addons (product_id, name, price, stock, active) values (${p[0].id}, ${args.name}, ${args.price}, ${args.stock}, true)`;
+    await sql.end();
+    return { ok: true as const };
+  } catch { return { ok: false as const }; }
+}
+
+// ---- staff invites + approval + customer password reset (owner) ----
+export async function inviteStaff(args: { email: string }) {
+  try {
+    const sql = conn();
+    const email = String(args.email || '').trim().toLowerCase();
+    if (!email.includes('@')) { await sql.end(); return { ok: false as const }; }
+    const id = crypto.randomBytes(12).toString('hex');
+    await sql`insert into staff_invites (id, email, status) values (${id}, ${email}, 'pending') on conflict (id) do nothing`;
+    await sql.end();
+    return { ok: true as const, inviteId: id };
+  } catch { return { ok: false as const }; }
+}
+export async function listInvites() {
+  try {
+    const sql = conn();
+    const rows = await sql`select * from staff_invites order by created_at desc limit 100`;
+    await sql.end();
+    return { ok: true as const, rows };
+  } catch { return { ok: false as const, rows: [] as any[] }; }
+}
+export async function joinStaff(args: { inviteId: string; password: string }) {
+  try {
+    const sql = conn();
+    const inv = await sql`select * from staff_invites where id=${args.inviteId} and status='pending' limit 1`;
+    if (!inv.length || !args.password || args.password.length < 6) { await sql.end(); return { ok: false as const }; }
+    const { auth } = await import('./auth');
+    await auth.api.signUpEmail({ body: { email: inv[0].email, password: args.password, name: 'Staff' } });
+    await sql`update "user" set role='staff' where email=${inv[0].email}`;
+    await sql`update staff_invites set status='joined' where id=${args.inviteId}`;
+    await sql.end();
+    return { ok: true as const };
+  } catch { return { ok: false as const }; }
+}
+export async function approveStaff(args: { email: string; approve: boolean }) {
+  try {
+    const sql = conn();
+    await sql`update staff_invites set status=${args.approve ? 'approved' : 'declined'} where email=${args.email}`;
+    await sql.end();
+    return { ok: true as const };
+  } catch { return { ok: false as const }; }
+}
+export async function listCustomers() {
+  try {
+    const sql = conn();
+    const rows = await sql`select id, full_name as name, phone, email, credit_balance as credit from customers order by id desc limit 500`;
+    await sql.end();
+    return { ok: true as const, rows };
+  } catch { return { ok: false as const, rows: [] as any[] }; }
+}
+export async function listEvents() {
+  try {
+    const sql = conn();
+    const rows = await sql`select order_id as "orderId", actor, action, note, created_at as "at" from order_events order by id desc limit 100`;
+    await sql.end();
+    return { ok: true as const, rows };
+  } catch { return { ok: false as const, rows: [] as any[] }; }
+}
+export async function logShopEvent(args: { customerId?: number; kind: string; detail?: string }) {
+  try {
+    const sql = conn();
+    await sql`insert into shop_events (customer_id, kind, detail) values (${args.customerId || null}, ${args.kind}, ${(args.detail || '').slice(0, 300)})`;
+    await sql.end();
+    return { ok: true as const };
+  } catch { return { ok: false as const }; }
 }
 
 // ---- dashboard numbers + exports ----

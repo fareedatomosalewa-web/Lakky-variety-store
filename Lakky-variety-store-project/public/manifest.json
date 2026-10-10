@@ -1,1 +1,1 @@
-{"name":"Lakky Variety Store","short_name":"Lakky","display":"standalone","background_color":"#F8FAFC","theme_color":"#0F766E","start_url":"/"}
+{"name":"Lakky Variety Store","short_name":"Lakky","description":"Something for every day.","display":"standalone","background_color":"#FFF9F3","theme_color":"#5A2948","start_url":"/","icons":[{"src":"/icon-192.png","sizes":"192x192","type":"image/png"},{"src":"/icon-512.png","sizes":"512x512","type":"image/png"}]}

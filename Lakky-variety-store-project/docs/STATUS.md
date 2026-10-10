@@ -1,18 +1,20 @@
-# STATUS — what is REAL vs DEMO (v1.7, deadline slice)
-# Updated: 2026-10-04. Rule until v1.11 PASS: no real orders, no real bank details, no customer link.
+# STATUS — what is REAL vs DEMO (v1.13 V1 shop build)
+# Updated: 2026-10-06. Rule until owner says otherwise: no real orders, no real bank details, no customer link.
 
-## REAL (Supabase, proven by scripts/v17-e2e.cjs)
-- Settings read/write (bank, days, note, fees) — lib/shop-actions.ts getSettings/saveSettings
-- Checkout creates pending_refs + pending_items + customers — createPending
-- Pay receipt upload to private bucket payment-proofs + agreed_at — submitReceipt
-- Admin Confirm in one transaction (order + order_items + available-=qty/reserved+=qty, Seen-in-bank gate) — confirmOrder
-- Admin sees signed receipt image + verified box — getSubmissionProof
-- Track by Order ID + full phone with fee math — trackOrder
-- /terms with live numbers; plain-English customer pages
-- Admin login UI (Better Auth session + role gate, demo flag 0 refs) — v1.8; needs owner account via create-owner
-- RLS lockdown 22/22 tables, public refused (42501) — drizzle/rls-lockdown.sql
+## REAL (Supabase-backed, proven by checks + e2e)
+- Settings incl. all numbers + content (bank, fees, tags, hours, banner, social, about/help)
+- Checkout (Pickup/Delivery/Stockpile, credit-first, coupons, 1-week pickup rule) → pending_refs
+- Pay (REF- codes, copy buttons, receipt upload to private bucket, agreed_at)
+- Admin Confirm transaction (orders + items + guarded stock move + overpay auto-credit)
+- Accept/reject-reasons/partial + message threads + fee marks + refund approve/decline
+- Track (live order + fee math + messages + cancel + overpay choice + received + reviews + problems)
+- Customer accounts + staff invites/approvals + role gates + customer password reset + activity log
+- Catalogue tools: filters/sort/sold-out-last/tiers/discounts/coupons/wishlist/media/product editor
+- Dashboard numbers + CSV exports + reminders/aged/fee sections + nightly JSON backup + RLS 34/34
+- PWA shell: manifest + icons + offline cache + push stub (VAPID keys later)
 
-## DEMO (localStorage / placeholders — do NOT rely on)
-- Proof upload file picker (decorative; submission row IS saved) → v1.9
-- Reports page data (demo zeros; math lib correct) → v1.10
-- Backup schedule + off-machine copy (script only) → v1.11
+## DEMO / later versions (do NOT rely on)
+- Email sending + email OTP (owner resets passwords meanwhile)
+- Native APK, Google sign-in, other integrations, VAPID push keys
+- Off-machine backup copy (local + Supabase platform only)
+- AI suggestions (events collected only)

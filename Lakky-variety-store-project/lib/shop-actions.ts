@@ -21,6 +21,14 @@ export async function getSettings() {
         bankDetails: s.bankDetails, globalDailyFee: s.globalDailyFee, freeHoldDays: s.freeHoldDays,
         overpaymentThreshold: s.overpaymentThreshold, underpaymentExpiryDays: s.underpaymentExpiryDays,
         abandonDays: s.abandonDays, fulfilmentDays: s.fulfilmentDays, pickupNote: s.pickupNote,
+        stockpileFeePerDay: s.stockpileFeePerDay ?? 50, maxStockpileDays: s.maxStockpileDays ?? 60,
+        creditCashMinimum: s.creditCashMinimum ?? 5000, restockTagDays: s.restockTagDays ?? 2,
+        newTagDays: s.newTagDays ?? 7, reportWindowHours: s.reportWindowHours ?? 48,
+        reminderFirstDays: s.reminderFirstDays ?? 2, reminderEveryDays: s.reminderEveryDays ?? 2,
+        pickupLocation: s.pickupLocation || '', pickupReveal: !!s.pickupReveal,
+        shopHours: s.shopHours || '', announcementOn: !!s.announcementOn,
+        announcementText: s.announcementText || '', socialLinks: s.socialLinks || [],
+        aboutText: s.aboutText || '', helpText: s.helpText || '',
       },
     };
   } catch { return { ok: false as const }; }
@@ -28,7 +36,7 @@ export async function getSettings() {
 
 export async function saveSettings(patch: Record<string, unknown>) {
   try {
-    const allowed = ['bankDetails', 'globalDailyFee', 'freeHoldDays', 'overpaymentThreshold', 'underpaymentExpiryDays', 'abandonDays', 'fulfilmentDays', 'pickupNote'] as const;
+    const allowed = ['bankDetails', 'globalDailyFee', 'freeHoldDays', 'overpaymentThreshold', 'underpaymentExpiryDays', 'abandonDays', 'fulfilmentDays', 'pickupNote', 'stockpileFeePerDay', 'maxStockpileDays', 'creditCashMinimum', 'restockTagDays', 'newTagDays', 'reportWindowHours', 'reminderFirstDays', 'reminderEveryDays', 'pickupLocation', 'pickupReveal', 'shopHours', 'announcementOn', 'announcementText', 'socialLinks', 'aboutText', 'helpText'] as const;
     const clean: Record<string, unknown> = {};
     for (const k of allowed) if (patch[k] !== undefined) clean[k] = patch[k];
     if (!Object.keys(clean).length) return { ok: false as const };
@@ -52,7 +60,7 @@ async function resolveVariantSkuId(attrs: Record<string, string> | undefined, pr
 
 export async function createPending(args: {
   name: string; phone: string; method: string; area: string; day: string;
-  agreedAt: string; lines: CartLine[]; total: number; creditApplied?: number;
+  agreedAt: string; lines: CartLine[]; total: number; creditApplied?: number; couponCode?: string;
 }) {
   try {
     const phone = normalizePhone(args.phone);
@@ -64,10 +72,20 @@ export async function createPending(args: {
     const seq = await db.execute(dsql`select nextval('pending_ref_seq') as n`);
     const n = Number((seq as any).rows ? (seq as any).rows[0].n : (seq as any)[0].n);
     const ref = `P-${refYear}-${String(n).padStart(4, '0')}`;
+    const { makeRef } = await import('./pricing');
+    let referenceId: string | null = null;
+    for (let i = 0; i < 5 && !referenceId; i++) {
+      const code = makeRef();
+      try {
+        const chk: any = await db.execute(dsql`select id from pending_refs where reference_id = ${code} limit 1`);
+        const rows = chk.rows || chk;
+        if (!rows.length) referenceId = code;
+      } catch { /* retry */ }
+    }
     const prow = await db.insert(pendingRefs).values({
-      ref, customerId,
+      ref, referenceId, customerId,
       fulfilment: { method: args.method, area: args.area, day: args.day },
-      expectedTotal: args.total, creditApplied: args.creditApplied || 0,
+      expectedTotal: args.total, creditApplied: args.creditApplied || 0, couponCode: args.couponCode || null,
       status: 'pending', agreedAt: args.agreedAt ? new Date(args.agreedAt) : null,
     } as any).returning({ id: pendingRefs.id });
     const pendingId = (prow as any[])[0].id;
@@ -152,10 +170,12 @@ export async function confirmOrder(args: { pendingRef: string; verifiedAmount: n
         } as any);
       }
       await tx.update(pendingRefs).set({ status: 'confirmed' } as any).where(eq(pendingRefs.id, pend.id));
-      const over = paid > expected ? paid - expected : 0;
-      if (over > 0) {
+      const over = paid > expected ? paid - expected : 0;      if (over > 0) {
         await tx.execute(dsql`insert into credit_ledger (customer_id, order_id, amount, reason) values (${pend.customerId}, ${orderId}, ${over}, 'overpayment auto-credit')`);
         await tx.execute(dsql`update customers set credit_balance = coalesce(credit_balance,0) + ${over} where id = ${pend.customerId}`);
+      }
+      if (pend.couponCode) {
+        await tx.execute(dsql`update coupons set used = used + 1 where code = ${pend.couponCode}`);
       }
       return { ok: true as const, displayId, over };
     });
