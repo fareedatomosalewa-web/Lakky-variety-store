@@ -175,6 +175,20 @@ export async function releaseStockpile(args: { orderId: number; actor?: string }
   } catch { return { ok: false as const }; }
 }
 
+// ---- customer session gate: guests see images+prices only, no cart/orders ----
+export async function customerSession(args: { token: string }) {
+  try {
+    const sql = conn();
+    if (!args.token) { await sql.end(); return { ok: false as const }; }
+    const s = await sql`select customer_id as "cid", expires_at as "exp" from customer_sessions where id=${args.token} limit 1`;
+    if (!s.length || new Date(s[0].exp) < new Date()) { await sql.end(); return { ok: false as const }; }
+    const c = await sql`select id, full_name as name, phone from customers where id=${s[0].cid} limit 1`;
+    await sql.end();
+    if (!c.length) return { ok: false as const };
+    return { ok: true as const, customer: c[0] };
+  } catch { return { ok: false as const }; }
+}
+
 // ---- credit-first quote: whole balance applied first, remainder to pay ----
 export async function quoteWithCredit(args: { phone: string; total: number; coupon?: string }) {
   try {
