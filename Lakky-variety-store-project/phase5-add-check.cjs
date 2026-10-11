@@ -53,7 +53,7 @@ const actionsSrc = fs.readFileSync(path.join(__dirname, 'lib', 'shop-actions.ts'
 assert(actionsSrc.includes('agreedAt: new Date()'), 'submitReceipt stores agreed_at on submit');
 const adminOrderSrc = fs.readFileSync(path.join(__dirname, 'app', 'admin', 'orders', '[id]', 'page.tsx'), 'utf8');
 assert(adminOrderSrc.includes('I have seen the payment'), 'admin verify requires payment-seen tick');
-assert(adminOrderSrc.includes('LVS-') && adminOrderSrc.includes('last4'), 'admin confirm uses LVS-serial-last4 format');
+assert(adminOrderSrc.includes('confirmOrder') && adminOrderSrc.includes('displayId'), 'admin confirm uses server LVS-serial-last4 order');
 assert(adminOrderSrc.includes('wa.me'), 'admin has WhatsApp wa.me button (manual, no API)');
 
 // 8. Track rate-limit 5/hour/IP
