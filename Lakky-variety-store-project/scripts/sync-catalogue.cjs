@@ -29,10 +29,9 @@ function getConn() {
         pid = ins[0].id; pc++;
       } else pid = prow[0].id;
       for (const v of p.variants) {
-        const attrs = JSON.stringify(v.attrs);
-        const ex = await sql`select id from variant_skus where product_id=${pid} and attrs=${attrs}::jsonb`;
+        const ex = await sql`select id from variant_skus where product_id=${pid} and attrs=${v.attrs}`;
         if (!ex.length) {
-          await sql`insert into variant_skus (product_id, attrs, price, available, reserved, active) values (${pid}, ${attrs}::jsonb, ${v.price}, ${v.available}, 0, true)`;
+          await sql`insert into variant_skus (product_id, attrs, price, available, reserved, active) values (${pid}, ${v.attrs}, ${v.price}, ${v.available}, 0, true)`;
           vc++;
         }
       }

@@ -39,7 +39,7 @@ export async function ensureReference(args: { pendingRef: string }) {
 export async function listPending() {
   try {
     const sql = conn();
-    const rows = await sql`select p.id, p.ref, p.reference_id as "referenceId", p.expected_total as total, p.status, p.created_at as "at", c.full_name as name, c.phone from pending_refs p left join customers c on c.id=p.customer_id where p.status in ('pending','under') order by p.id desc limit 200`;
+    const rows = await sql`select p.id, p.ref, p.reference_id as "referenceId", p.expected_total as total, p.status, p.created_at as "at", c.full_name as name, c.phone, (select max(amount_claimed) from payment_submissions s where s.pending_id=p.id) as submitted from pending_refs p left join customers c on c.id=p.customer_id where p.status in ('pending','under') order by p.id desc limit 200`;
     await sql.end();
     return { ok: true as const, rows };
   } catch { return { ok: false as const, rows: [] as any[] }; }
@@ -67,7 +67,7 @@ export async function getPendingDetail(args: { ref: string }) {
     return { ok: true as const, pending: pend, items, submissions: subs };
   } catch { return { ok: false as const }; }
 }
-const REJECT_OK = ['Underpayment', 'Fake receipt', 'Wrong order', 'Other'];
+const REJECT_OK = ['Underpayment', 'Fake receipt', 'Wrong order'];
 export async function rejectPending(args: { ref: string; reason: string; note?: string; admin?: string }) {
   try {
     const sql = conn();
@@ -130,7 +130,7 @@ export async function getOrderThread(args: { ref: string }) {
   try {
     const sql = conn();
     const key = String(args.ref || '').trim().toUpperCase();
-    const all = await sql`select id, display_id as "displayId", pending_id as "pendingId" from orders order by id desc limit 5000`;
+    const all = await sql`select id, display_id as "displayId", pending_id as "pendingId", fulfilment_status as st from orders order by id desc limit 5000`;
     const hit = (all as any[]).find((o) => String(o.displayId).toUpperCase() === key || String(o.displayId).toUpperCase().endsWith(key));
     let orderId: number | null = hit ? hit.id : null;
     if (!orderId) {
@@ -142,7 +142,8 @@ export async function getOrderThread(args: { ref: string }) {
     }
     const messages = orderId ? await sql`select sender, text, created_at as "at" from order_messages where order_id=${orderId} order by id` : [];
     await sql.end();
-    return { ok: true as const, orderId, messages };
+    const stRow = orderId ? (all as any[]).find((o) => o.id === orderId) : null;
+    return { ok: true as const, orderId, messages, status: stRow ? stRow.st : null };
   } catch { return { ok: false as const, orderId: null, messages: [] as any[] }; }
 }
 
@@ -186,6 +187,28 @@ export async function customerSession(args: { token: string }) {
     await sql.end();
     if (!c.length) return { ok: false as const };
     return { ok: true as const, customer: c[0] };
+  } catch { return { ok: false as const }; }
+}
+
+// ---- one-tap progress with instant customer notice (labels live in ./pricing) ----
+import { stepLabel } from './pricing';
+const NEXT: Record<string, string[]> = {
+  processing: ['packaged'], packaged: ['ready', 'onway'],
+  ready: ['completed'], onway: ['completed'],
+};
+export async function advanceOrder(args: { orderId: number; to: string; actor?: string }) {
+  try {
+    const sql = conn();
+    const cur = await sql`select fulfilment_status as st, customer_id as "cid", display_id as "displayId" from orders where id=${args.orderId} limit 1`;
+    if (!cur.length) { await sql.end(); return { ok: false as const }; }
+    const from = String(cur[0].st || '');
+    if (!(NEXT[from] || []).includes(args.to)) { await sql.end(); return { ok: false as const }; }
+    await sql`update orders set fulfilment_status=${args.to} where id=${args.orderId}`;
+    await sql`insert into order_events (order_id, actor, action) values (${args.orderId}, ${args.actor || 'owner'}, ${'status->' + args.to})`;
+    await sql`insert into notifications (customer_id, order_id, type, message) values (${cur[0].cid}, ${args.orderId}, 'progress', ${'Order ' + cur[0].displayId + ' is now: ' + stepLabel(args.to)})`;
+    await sql`insert into order_messages (order_id, sender, text) values (${args.orderId}, 'owner', ${'Status update: ' + stepLabel(args.to)})`;
+    await sql.end();
+    return { ok: true as const, label: stepLabel(args.to) };
   } catch { return { ok: false as const }; }
 }
 

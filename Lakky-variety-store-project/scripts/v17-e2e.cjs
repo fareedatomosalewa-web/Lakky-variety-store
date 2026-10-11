@@ -52,7 +52,7 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
   // Stock before
   const postgres = require('postgres');
   const sql = postgres(process.env.DATABASE_URL, { prepare: false });
-  const before = await sql`select v.id, v.available, v.reserved from variant_skus v join products p on p.id=v.product_id where p.name='Double Soap Holder' limit 1`;
+  const before = await sql`select v.id, v.available, v.reserved from variant_skus v join products p on p.id=v.product_id where p.name='Double Soap Holder' and v.attrs='{"Colour":"green"}'::jsonb limit 1`;
 
   // 3. Admin confirm (seen-in-bank) in one transaction
   const conf = await actions.confirmOrder({ pendingRef: pend.ref, verifiedAmount: 2000, seenBank: true });
@@ -70,6 +70,10 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
   const ord = await sql`select id from orders where display_id=${conf.displayId}`;
   if (ord.length) {
     await sql`delete from order_items where order_id=${ord[0].id}`;
+    await sql`delete from order_messages where order_id=${ord[0].id}`;
+    await sql`delete from order_events where order_id=${ord[0].id}`;
+    await sql`delete from notifications where order_id=${ord[0].id}`;
+    await sql`delete from fee_payments where order_id=${ord[0].id}`;
     await sql`delete from orders where id=${ord[0].id}`;
   }
   await sql`update variant_skus set available = available + 1, reserved = reserved - 1 where id=${before[0].id}`;
@@ -82,6 +86,9 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
     await sql`delete from pending_items where pending_id=${s.pending_id}`;
     await sql`delete from pending_refs where id=${s.pending_id}`;
   }
+  await sql`delete from notifications where customer_id in (select id from customers where phone=${phone})`;
+  await sql`delete from order_messages where order_id in (select id from orders where display_id=${conf.displayId})`;
+  await sql`delete from customer_sessions where customer_id in (select id from customers where phone=${phone})`;
   await sql`delete from customers where phone=${phone}`;
   await sql.end();
   console.log('ALL V1.7 E2E CHECKS PASSED');

@@ -42,10 +42,10 @@ function shortCode(e) {
       [{ colour: 'White', size: '5"' }, 10000, 0],
     ];
     for (const [attrs, price, avail] of variants) {
-      await sql`insert into variant_skus (product_id, attrs, price, available, reserved, active) values (${pid}, ${JSON.stringify(attrs)}::jsonb, ${price}, ${avail}, 0, true)`;
+      await sql`insert into variant_skus (product_id, attrs, price, available, reserved, active) values (${pid}, ${attrs}, ${price}, ${avail}, 0, true)`;
     }
     await sql`insert into addons (name, price, active) values ('Gift box', 2000, true)`;
-    await sql`insert into settings (bank_details, global_daily_fee, free_hold_days, overpayment_threshold, underpayment_expiry_days, abandon_days, fulfilment_days, pickup_note) values (${JSON.stringify({ bank: 'FILL-IN', accountNumber: 'FILL-IN', accountName: 'Lakky Variety Store' })}::jsonb, 500, 14, 50000, 7, 60, ${JSON.stringify(['Mon','Thu','Sat'])}::jsonb, 'FILL-IN')`;
+    await sql`insert into settings (bank_details, global_daily_fee, free_hold_days, overpayment_threshold, underpayment_expiry_days, abandon_days, fulfilment_days, pickup_note) values (${{ bank: 'FILL-IN', accountNumber: 'FILL-IN', accountName: 'Lakky Variety Store' }}, 500, 14, 50000, 7, 60, ${['Mon','Thu','Sat']}, 'FILL-IN')`;
     const counts = await sql`select (select count(*)::int from products) as products, (select count(*)::int from variant_skus) as variants, (select count(*)::int from addons) as addons, (select count(*)::int from settings) as settings`;
     console.log('PASS: seeded pilot fresh: ' + JSON.stringify(counts[0]));
     await sql.end();

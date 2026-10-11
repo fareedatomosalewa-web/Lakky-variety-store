@@ -1,4 +1,10 @@
 // Pure pricing + code helpers — NO "use server" here (imported by pages AND actions).
+const STEP_LABEL: Record<string, string> = {
+  pending: 'Waiting for confirmation', processing: 'Confirmed', packaged: 'Being packed',
+  ready: 'Ready for pickup', onway: 'On the way', completed: 'Completed',
+  cancelled: 'Cancelled', 'cancel-requested': 'Cancellation requested',
+};
+export function stepLabel(st: string): string { return STEP_LABEL[st] || st; }
 const REFCHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export function makeRef(): string {
   const b = new Uint8Array(6);

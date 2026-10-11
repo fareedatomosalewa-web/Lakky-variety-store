@@ -176,7 +176,7 @@ export async function confirmOrder(args: { pendingRef: string; verifiedAmount: n
           qty: line.qty, unitPriceSnapshot: line.unitPriceSnapshot,
         } as any);
       }
-      await tx.update(pendingRefs).set({ status: 'confirmed' } as any).where(eq(pendingRefs.id, pend.id));
+            await tx.update(pendingRefs).set({ status: 'confirmed' } as any).where(eq(pendingRefs.id, pend.id));
       const over = paid > expected ? paid - expected : 0;      if (over > 0) {
         await tx.execute(dsql`insert into credit_ledger (customer_id, order_id, amount, reason) values (${pend.customerId}, ${orderId}, ${over}, 'overpayment auto-credit')`);
         await tx.execute(dsql`update customers set credit_balance = coalesce(credit_balance,0) + ${over} where id = ${pend.customerId}`);
@@ -184,6 +184,8 @@ export async function confirmOrder(args: { pendingRef: string; verifiedAmount: n
       if (pend.couponCode) {
         await tx.execute(dsql`update coupons set used = used + 1 where code = ${pend.couponCode}`);
       }
+      await tx.execute(dsql`insert into notifications (customer_id, order_id, type, message) values (${pend.customerId}, ${orderId}, 'confirmed', ${'Order ' + displayId + ' confirmed.'})`);
+      await tx.execute(dsql`insert into order_messages (order_id, sender, text) values (${orderId}, 'owner', 'Payment confirmed. Order is being prepared.')`);
       return { ok: true as const, displayId, over };
     });
   } catch (e: any) {

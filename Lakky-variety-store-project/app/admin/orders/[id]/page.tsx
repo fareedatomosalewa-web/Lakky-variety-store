@@ -2,11 +2,13 @@
 import { useEffect, useState } from 'react';
 import { confirmOrder, getSubmissionProof } from '../../../../lib/shop-actions';
 import { useAdminGuard } from '../../../../lib/use-admin-guard';
-import { getOrderThread, getPendingDetail, listFees, listRefunds, decideRefund, markFeePaid, markPartial, postMessage, rejectPending } from '../../../../lib/shop-v1';
-const REJECTS = ['Underpayment', 'Fake receipt', 'Wrong order', 'Other'];
+import { getOrderThread, getPendingDetail, listFees, listRefunds, decideRefund, markFeePaid, postMessage, rejectPending, advanceOrder } from '../../../../lib/shop-v1';
+import { stepLabel } from '../../../../lib/pricing';
+const REJECTS = ['Underpayment', 'Fake receipt', 'Wrong order'];
 export default function AdminOrder({ params }: { params: { id: string } }) {
   const allowed = useAdminGuard(['admin', 'staff']);
   const [o, setO] = useState<any>(null); const [verified, setVerified] = useState(''); const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
   const [seenBank, setSeenBank] = useState(false);
   const [proofUrl, setProofUrl] = useState('');
   const [live, setLive] = useState<any>(null);
@@ -32,39 +34,39 @@ export default function AdminOrder({ params }: { params: { id: string } }) {
       }
     }).catch(() => setO(null));
     getSubmissionProof({ ref: params.id }).then((r: any) => { if (r && r.ok && r.url) setProofUrl(r.url); }).catch(() => {});
-    getOrderThread({ ref: params.id }).then((r: any) => { if (r && r.ok) { setOrderId(r.orderId); setMsgs(r.messages || []); if (r.orderId) listFees({ orderId: r.orderId }).then((f: any) => { if (f && f.ok) setFees(f.rows); }).catch(() => {}); } }).catch(() => {});
+    getOrderThread({ ref: params.id }).then((r: any) => { if (r && r.ok) { setOrderId(r.orderId); setMsgs(r.messages || []); if (r.status) setCurStatus(r.status); if (r.orderId) listFees({ orderId: r.orderId }).then((f: any) => { if (f && f.ok) setFees(f.rows); }).catch(() => {}); } }).catch(() => {});
     listRefunds({}).then((r: any) => { if (r && r.ok) setRefunds(r.rows); }).catch(() => {});
   }, [params.id]);
-  const reloadMsgs = async () => { const r: any = await getOrderThread({ ref: params.id }).catch(() => null); if (r && r.ok) { setOrderId(r.orderId); setMsgs(r.messages || []); } };
+  const reloadMsgs = async () => { const r: any = await getOrderThread({ ref: params.id }).catch(() => null); if (r && r.ok) { setOrderId(r.orderId); setMsgs(r.messages || []); if (r.status) setCurStatus(r.status); } };
   const act = async (kind: string) => {
+    if (busy) return;
     const expected = Number(o.total || 0), paid = Number(o.amount || 0);
     if (kind === 'confirm') {
       if (!seenBank) { setMsg('Tick “I have seen the payment” first — confirm means the money is in our bank.'); return; }
       if (paid < expected) { setMsg(`Blocked: underpayment outstanding ₦${(expected - paid).toLocaleString()}`); return; }
-      if (o.live) {
-        try {
-          const r: any = await confirmOrder({ pendingRef: params.id, verifiedAmount: paid, seenBank: true });
-          if (r.ok) { setVerified(r.displayId); setMsg(`Confirmed ${r.displayId} in Supabase. Stock reserved (available-=qty, reserved+=qty).` + (r.over ? ` Overpayment excess ₦${Number(r.over).toLocaleString()} → Store Credit.` : '')); return; }
-          if (r.reason === 'race-lost') { setMsg('Blocked: stock gone at verify — amount goes to Store Credit.'); return; }
-          if (r.reason === 'underpayment') { setMsg(`Underpayment in Supabase. Outstanding ₦${Number(r.outstanding || 0).toLocaleString()}.`); return; }
-        } catch { /* fall through to local demo confirm */ }
-      }
-      const n = Number(localStorage.getItem('lakky-order-seq') || '0') + 1;
-      localStorage.setItem('lakky-order-seq', String(n));
-      const last4 = String(o.phone || '').replace(/\D/g, '').slice(-4).padStart(4, '0');
-      const id = `LVS-${String(n).padStart(3, '0')}-${last4}`;
-      setVerified(id);
-      setMsg(paid > expected ? `Confirmed ${id}. Stock reserved. Overpayment excess ₦${(paid - expected).toLocaleString()} → Store Credit (non-cashable).` : `Confirmed ${id}. Stock reserved (available-=qty, reserved+=qty).`);
+      setBusy(true); setMsg('Working — saving to Supabase…');
+      try {
+        const r: any = await confirmOrder({ pendingRef: params.id, verifiedAmount: paid, seenBank: true });
+        if (r.ok) { setVerified(r.displayId); setMsg(`Confirmed ${r.displayId} in Supabase. Stock reserved (available-=qty, reserved+=qty).` + (r.over ? ` Overpayment excess ₦${Number(r.over).toLocaleString()} → Store Credit.` : '')); return; }
+        if (r.reason === 'race-lost') { setMsg('Blocked: stock gone at verify — amount goes to Store Credit.'); return; }
+        if (r.reason === 'underpayment') { setMsg(`Underpayment in Supabase. Outstanding ₦${Number(r.outstanding || 0).toLocaleString()}.`); return; }
+        setMsg(`Not saved — Supabase said: ${r.reason || 'unknown'}. Nothing changed. Try again.`);
+        return;
+      } catch { setMsg('Not saved — could not reach Supabase. Nothing changed. Try again.'); return; }
+      finally { setBusy(false); }
     }
     if (kind === 'under') setMsg(`Marked Underpayment. Outstanding ₦${(expected - paid).toLocaleString()}. No Order ID, no stock move. Top-up stays linked.`);
     if (kind === 'reject') {
       const r: any = await rejectPending({ ref: params.id, reason, note, admin: 'owner' }).catch(() => null);
       setMsg(r && r.ok ? `Rejected (${reason}). Customer sees the reason.` : 'Rejected. No Order ID, no stock move.');
     }
-    if (kind === 'partial') {
-      const r: any = await markPartial({ ref: params.id, note: note || 'Some items unavailable', admin: 'owner' }).catch(() => null);
-      setMsg(r && r.ok ? 'Marked partially accepted. Customer chooses: credit, refund, or cancel.' : 'Could not mark partial.');
-    }
+  };
+  const [curStatus, setCurStatus] = useState('');
+  const step = async (to: string) => {
+    if (!orderId) return;
+    const r: any = await advanceOrder({ orderId, to, actor: 'owner' }).catch(() => null);
+    if (r && r.ok) { setCurStatus(to); setMsg(`Moved to ${r.label}. Customer notified in-app.`); reloadMsgs(); }
+    else setMsg('Step not allowed from here.');
   };
   const sendReply = async () => {
     if (!reply.trim() || !orderId) return;
@@ -85,7 +87,12 @@ export default function AdminOrder({ params }: { params: { id: string } }) {
     <div>Stockpile: confirmed date → free days → daily fee (live Settings). Release blocked if fee unpaid.</div>
     {proofUrl ? <div><div className="small">Customer receipt:</div><img src={proofUrl} alt="payment receipt" style={{ maxWidth: '100%', borderRadius: 10 }} /></div> : null}
     <div><label><input type="checkbox" checked={seenBank} onChange={e=>setSeenBank(e.target.checked)} /> I have seen the payment — required</label></div>
-    <button className="btn" onClick={() => act('confirm')}>Confirm</button> <button className="btn" onClick={() => act('under')}>Mark Under</button> <button className="btn-s" onClick={() => act('partial')}>Partially accept</button>
+    <button className="btn" onClick={() => act('confirm')}>Confirm</button> <button className="btn" onClick={() => act('under')}>Mark Under</button>
+    {orderId && (<div style={{ marginTop: 8 }}><b>Progress: {stepLabel(curStatus) || curStatus || '…'}</b><div>
+      {curStatus === 'processing' && <button className="btn-s" onClick={() => step('packaged')}>Next: Being packed →</button>}
+      {curStatus === 'packaged' && <span><button className="btn-s" onClick={() => step('onway')}>On the way →</button> <button className="btn-s" onClick={() => step('ready')}>Ready for pickup →</button></span>}
+      {(curStatus === 'onway' || curStatus === 'ready') && <button className="btn-s" onClick={() => step('completed')}>Completed →</button>}
+    </div></div>)}
     <div style={{ marginTop: 8 }}><b>Reject with reason</b> <select value={reason} onChange={(e) => setReason(e.target.value)}>{REJECTS.map((r) => <option key={r} value={r}>{r}</option>)}</select> <input placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} /> <button className="btn-d" onClick={() => act('reject')}>Reject</button></div>
     <div style={{ marginTop: 8 }}><button className="btn-s" onClick={() => fee('delivery')}>Delivery fee paid</button> <button className="btn-s" onClick={() => fee('stockpile')}>Stockpile fee paid</button></div>
     <div><b>{msg}</b></div>

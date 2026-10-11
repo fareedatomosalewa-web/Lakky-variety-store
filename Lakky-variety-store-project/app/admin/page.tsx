@@ -1,7 +1,8 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useAdminGuard } from '../../lib/use-admin-guard';
-import { listPending, adminSearch, setProgress, dashboard, exportCsv, remindersDue, listFees, agedStockpile, releaseStockpile } from '../../lib/shop-v1';
+import { listPending, adminSearch, setProgress, dashboard, exportCsv, remindersDue, listFees, agedStockpile, releaseStockpile, rejectPending } from '../../lib/shop-v1';
+import { confirmOrder } from '../../lib/shop-actions';
 const NEXTS: Record<string, string> = { pending: 'confirmed', confirmed: 'packaged', packaged: 'onway', onway: 'ready', ready: 'completed' };
 export default function AdminDash() {
   const allowed = useAdminGuard(['admin', 'staff']);
@@ -12,6 +13,9 @@ export default function AdminDash() {
   const [remind, setRemind] = useState<any[]>([]);
   const [fees, setFees] = useState<any[]>([]);
   const [aged, setAged] = useState<any[]>([]);
+  const [pop, setPop] = useState<any>(null);
+  const [popMsg, setPopMsg] = useState('');
+  const [popReason, setPopReason] = useState('Underpayment');
   const load = async () => {
     const r: any = await listPending().catch(() => null);
     if (r && r.ok) setItems(r.rows);
@@ -51,7 +55,21 @@ export default function AdminDash() {
       {found.map((o) => <div key={o.id} className="small"><a href={`/admin/orders/${o.referenceId || o.displayId}`}>{o.displayId}</a> • {o.name} • {o.phone} • {o.pay} • {o.st}</div>)}</div>
     <div className="card"><b>Bulk progress ({sel.length} picked)</b><div>{['packaged', 'onway', 'ready', 'completed'].map((t) => <button key={t} className="btn-s" style={{ marginRight: 6 }} onClick={() => bulk(t)}>→ {t}</button>)}</div></div>
     {items.length === 0 && <div className="card">No pending proofs yet. Submit one via storefront Pay page.</div>}
-    {items.map((o) => <div className="card" key={o.id}><input type="checkbox" checked={sel.includes(o.id)} onChange={() => toggle(o.id)} /> <b>{o.referenceId || o.ref}</b> • {o.name} • {o.phone} • Expected ₦{Number(o.total).toLocaleString()} <span className="badge">{o.status}</span><br /><a className="btn" href={`/admin/orders/${o.referenceId || o.ref}`}>Open order detail →</a></div>)}
+    {items.map((o) => <div className="card" key={o.id}><input type="checkbox" checked={sel.includes(o.id)} onChange={() => toggle(o.id)} /> <b>{o.referenceId || o.ref}</b> • {o.name} • {o.phone} • Expected ₦{Number(o.total).toLocaleString()} • Got ₦{Number(o.submitted || 0).toLocaleString()} <span className="badge">{o.status}</span><br /><button className="btn-s" onClick={() => { setPop({ mode: 'confirm', ref: o.referenceId || o.ref }); setPopMsg(''); }}>Confirm</button> <button className="btn-d" onClick={() => { setPop({ mode: 'reject', ref: o.referenceId || o.ref }); setPopMsg(''); }}>Reject</button> <a className="btn" href={`/admin/orders/${o.referenceId || o.ref}`}>Open →</a></div>)}
+    {pop && (<div className="card"><h3>{pop.mode === 'confirm' ? 'Have you seen this payment in our bank?' : 'Reject this order?'}</h3>
+      {pop.mode === 'reject' && <div><select value={popReason} onChange={(e) => setPopReason(e.target.value)}>{['Underpayment', 'Fake receipt', 'Wrong order'].map((r) => <option key={r} value={r}>{r}</option>)}</select></div>}
+      <div><b>{popMsg}</b></div>
+      <button className="btn" onClick={async () => {
+        if (pop.mode === 'confirm') {
+          const it = items.find((x) => (x.referenceId || x.ref) === pop.ref);
+          if (Number(it.submitted || 0) < Number(it.total || 0)) { setPopMsg('Underpaid — open the order instead.'); return; }
+          const r: any = await confirmOrder({ pendingRef: pop.ref, verifiedAmount: Number(it.submitted), seenBank: true }).catch(() => null);
+          if (r && r.ok) { setPop(null); load(); } else setPopMsg('Not saved — ' + ((r && r.reason) || 'try again') + '. Nothing changed.');
+        } else {
+          const r: any = await rejectPending({ ref: pop.ref, reason: popReason, admin: 'owner' }).catch(() => null);
+          if (r && r.ok) { setPop(null); load(); } else setPopMsg('Could not reject. Try again.');
+        }
+      }}>Yes</button> <button className="btn-s" onClick={() => setPop(null)}>Back</button></div>)}
     <div className="card"><b>Exports</b> <button className="btn-s" onClick={() => csv('orders')}>Orders CSV</button> <button className="btn-s" onClick={() => csv('customers')}>Customers CSV</button></div>
     {remind.length > 0 && <div className="card"><b>Not-completed reminders due ({remind.length})</b>{remind.map((o: any) => <div key={o.id} className="small">{o.displayId} • {o.st} — remind customer + owner</div>)}</div>}
     {fees.length > 0 && <div className="card"><b>Stockpile fee payments ({fees.length})</b>{fees.slice(0, 20).map((f: any) => <div key={f.id} className="small">#{f.id} {f.displayId} ₦{Number(f.amount).toLocaleString()} [{f.status}]</div>)}</div>}
