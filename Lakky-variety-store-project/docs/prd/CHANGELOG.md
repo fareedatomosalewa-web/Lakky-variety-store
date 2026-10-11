@@ -15,3 +15,4 @@ v1.10 → wording + pay flow: inline options, plain-English checkout/pay, receip
 v1.11 → brand redesign: plum/cream tokens, DM Sans, nav + search + categories + featured/new/wholesale/footer, 8-product catalogue. Logic unchanged. All checks PASS.
 v1.12 → real 12-product catalogue (sheet + Drive photos, dynamic categories, generic pickers, fallbacks) + netlify.toml. All checks + e2e PASS.
 v1.13 → V1 shop build (§1–8): ref IDs, credit-first, messages, refunds, cancel, reviews, fulfilment, catalogue tools, accounts, staff, pages, backup, PWA shell. All suites PASS.
+v1.14 → owner Part 1: 2 IDs only (P-refs internal), account-first shopping, demo catalogue removed, How-it-works removed, admin loads Supabase first, one-checkbox Confirm. All checks PASS.

@@ -16,6 +16,10 @@ export default function ProductPage({ params }: { params: { id: string } }) {
   const [added, setAdded] = useState(false);
   const [qty, setQty] = useState(1);
   const [zoom, setZoom] = useState(false);
+  const [logged, setLogged] = useState(false);
+  useEffect(() => {
+    try { setLogged(!!JSON.parse(localStorage.getItem('lakky-customer') || '{}').token); } catch { setLogged(false); }
+  }, []);
   const [extra, setExtra] = useState<any[]>([]);
   const [addons, setAddons] = useState<any[]>([]);
   const [addonId, setAddonId] = useState<number | null>(null);
@@ -74,5 +78,5 @@ export default function ProductPage({ params }: { params: { id: string } }) {
     {addons.length > 0 && (<div style={{ marginTop: 6 }}><div className="small">Add-ons for this item</div>{addons.map((a: any) => <div key={a.id}><label><input type="radio" name="addon" checked={addonId === a.id} onChange={() => { setAddonId(a.id); setAddon(false); }} /> {a.name} +₦{Number(a.price).toLocaleString()}{Number(a.stock) <= 0 ? ' — Unavailable' : ''}</label></div>)}<div><label><input type="radio" name="addon" checked={addonId === null && !addon} onChange={() => setAddonId(null)} /> No add-on</label></div></div>)}
     {tiers.length > 0 && (<div style={{ marginTop: 6 }}><div className="small">Buy more, pay less each</div><table><tbody>{tiers.map((t: any, i: number) => <tr key={i}><td>{t.min}{t.max ? `–${t.max}` : '+'}</td><td>₦{Number(t.each).toLocaleString()} each</td></tr>)}</tbody></table></div>)}
     <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '8px 0' }}><button className="btn-s" onClick={() => setQty(Math.max(1, (Math.floor(Number(qty) || 1)) - 1))}>−</button><input type="number" min={1} max={999} value={qty} onChange={(e) => setQty(e.target.value as unknown as number)} style={{ width: 70, textAlign: 'center' }} /><button className="btn-s" onClick={() => setQty(Math.min(999, (Math.floor(Number(qty) || 1)) + 1))}>+</button></div>
-    <button className="btn" onClick={add}>{added ? 'Added ✓' : 'Add to Cart'}</button></div>);
+    {logged ? <button className="btn" onClick={add}>{added ? 'Added ✓' : 'Add to Cart'}</button> : <a className="btn-s" href="/login" style={{ textDecoration: 'none' }}>Log in to buy</a>}</div>);
 }

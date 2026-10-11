@@ -2,10 +2,15 @@
 import { useEffect, useState } from 'react';
 export default function CartPage() {
   const [cart, setCart] = useState<any[]>([]);
-  useEffect(() => { setCart(JSON.parse(localStorage.getItem('lakky-cart') || '[]')); }, []);
+  const [logged, setLogged] = useState(false);
+  useEffect(() => {
+    setCart(JSON.parse(localStorage.getItem('lakky-cart') || '[]'));
+    try { setLogged(!!JSON.parse(localStorage.getItem('lakky-customer') || '{}').token); } catch { setLogged(false); }
+  }, []);
   const save = (c: any[]) => { setCart(c); localStorage.setItem('lakky-cart', JSON.stringify(c)); window.dispatchEvent(new Event('lakky-cart-updated')); };
   const total = cart.reduce((s, l) => s + (l.price + (l.addon ? l.addon.price : 0)) * l.qty, 0);
   if (!cart.length) return (<div><h2>Your cart</h2><div className="empty">Your cart is empty. <a href="/#shop">Find something you'll love →</a></div></div>);
+  if (!logged) return (<div><h2>Your cart</h2><div className="empty">Please <a href="/login">log in</a> or <a href="/signup">create an account</a> to shop. You can keep looking at photos and prices.</div></div>);
   return (<div><h2>Your cart</h2><div className="small">Live total ₦{total.toLocaleString()}</div>
     {cart.map((l, i) => <div className="card" key={i}><b>{l.name}</b> <span className="small">{l.attrs ? Object.values(l.attrs).join(' / ') : `${l.colour || ''} ${l.size || ''}`.trim()}{l.addon ? ' + Gift box' : ''}</span><div className="prod-price">₦{((l.price + (l.addon ? l.addon.price : 0)) * l.qty).toLocaleString()}</div><div className="small">{l.qty} × ₦{(l.price + (l.addon ? l.addon.price : 0)).toLocaleString()}</div>
     <button className="btn-s" onClick={() => { const c=[...cart]; c[i].qty+=1; save(c); }}>+</button> <input type="number" min={1} max={999} value={l.qty} onChange={(e) => { const c=[...cart]; const n=Math.max(1,Math.min(999,Math.floor(Number(e.target.value)||1))); c[i].qty=n; save(c); }} style={{ width: 64, textAlign: 'center' }} /> <button className="btn-s" onClick={() => { const c=[...cart]; c[i].qty=Math.max(1,c[i].qty-1); save(c); }}>-</button> <button className="btn-d" onClick={() => save(cart.filter((_,j)=>j!==i))}>Remove</button></div>)}

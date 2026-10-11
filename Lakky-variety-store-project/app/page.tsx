@@ -59,8 +59,6 @@ export default function Home() {
     <h2 id="categories">Categories</h2>
     <div className="catchips">{['All', ...allCats].map((c) => <button key={c} className={cat === c ? 'on' : ''} onClick={() => setCat(c)}>{c}</button>)}</div>
     <div className="strip">
-      <div><b>How it works:</b> 1 Choose → 2 Pay by bank transfer → 3 Upload your receipt, we confirm</div>
-      {showFee && <div className="small">Free {s.freeHoldDays}-day hold • Fee ₦{Number(s.globalDailyFee).toLocaleString()}/day after{showNote && <> • {s.pickupNote}</>}</div>}
       <div><a href="/orders">Track your order →</a>{waNumber ? (<span> • <a href={`https://wa.me/${waNumber}`} target="_blank" rel="noreferrer">WhatsApp us</a></span>) : null}</div>
       {isAdmin && missing.length > 0 && <div className="small">To-do (admin only): set {missing.join(', ')} in Admin Settings.</div>}
     </div>
@@ -87,7 +85,11 @@ function dimsOf(p: any): string[] {
   return [...keys];
 }
 
-function ProductCard({ p }: { p: any }) {  const dims = dimsOf(p);
+function ProductCard({ p }: { p: any }) {
+  const [logged, setLogged] = useState(false);
+  useEffect(() => {
+    try { setLogged(!!JSON.parse(localStorage.getItem('lakky-customer') || '{}').token); } catch { setLogged(false); }
+  }, []);  const dims = dimsOf(p);
   const multi = p.variants.length > 1 && dims.length > 0;
   const [open, setOpen] = useState(false);
   const [sel, setSel] = useState<Record<string, string>>(() => Object.fromEntries(dims.map((d) => [d, p.variants[0].attrs[d]])));
@@ -134,8 +136,9 @@ function ProductCard({ p }: { p: any }) {  const dims = dimsOf(p);
       ? <div><span style={{ textDecoration: 'line-through' }} className="small">₦{from.toLocaleString()}</span> <span className="prod-price">₦{deal.price.toLocaleString()}</span> <span className="badge badge-sale">{deal.label}</span></div>
       : <div className="prod-price">₦{from.toLocaleString()}</div>}
     <div className="small">{catsOf(p).join(' • ')}</div>
-    {!multi && <div style={{ marginTop: 6 }}><button className="btn" style={{ width: '100%' }} disabled={match.available <= 0} onClick={() => add(match)}>{added ? 'Added ✓' : 'Add to Cart'}</button></div>}
-    {multi && <button className="btn-s" style={{ width: '100%', marginTop: 6 }} onClick={() => setOpen(!open)}>{open ? 'Hide options' : 'Choose options'}</button>}
+    {!multi && <div style={{ marginTop: 6 }}>{logged ? <button className="btn" style={{ width: '100%' }} disabled={match.available <= 0} onClick={() => add(match)}>{added ? 'Added ✓' : 'Add to Cart'}</button> : <a className="btn-s" href="/login" style={{ textDecoration: 'none' }}>Log in to buy</a>}</div>}
+    {multi && logged && <button className="btn-s" style={{ width: '100%', marginTop: 6 }} onClick={() => setOpen(!open)}>{open ? 'Hide options' : 'Choose options'}</button>}
+    {multi && !logged && <div style={{ marginTop: 6 }}><a className="btn-s" href="/login" style={{ textDecoration: 'none' }}>Log in to buy</a></div>}
     {multi && open && (<div style={{ marginTop: 8 }}>
       {dims.map((d) => {
         const opts: string[] = [...new Set((p.variants as any[]).map((v: any) => String(v.attrs[d])))];

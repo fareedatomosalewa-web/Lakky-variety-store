@@ -24,21 +24,27 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
 (async () => {
   if (!loadEnv()) { console.error('FAIL: no connection string'); process.exit(1); }
   const actions = await import('../lib/shop-actions.ts');
-  const phone = '+234809991234';
+  const v1 = await import('../lib/shop-v1.ts');
   const stamp = Date.now().toString(36);
+  const phone = '+23480999' + stamp.slice(-4);
 
-  // 2. Checkout creates pending
+  // Temp customer account (token required to place orders)
+  const su = await v1.signUpCustomer({ name: 'E2E Buyer ' + stamp, phone, email: `e2e-${stamp}@example.com`, password: 'E2e-test-' + stamp });
+  assert(su.ok, 'e2e: temp customer account created');
+  const token = su.token;
+
+  // 2. Checkout creates pending (Double Soap Holder, green, owner catalogue)
   const pend = await actions.createPending({
     name: 'E2E Buyer ' + stamp, phone, method: 'Pickup', area: '', day: '',
     agreedAt: new Date().toISOString(),
-    lines: [{ attrs: { colour: 'Black', size: '9"' }, price: 12000, qty: 1 }],
-    total: 12000,
+    lines: [{ attrs: { Colour: 'green' }, price: 2000, qty: 1 }],
+    total: 2000, token,
   });
   assert(pend.ok && pend.ref.startsWith('P-'), 'e2e: checkout created pending ' + (pend.ref || 'none') + ' in Supabase');
 
   // Pay via receipt upload to the REAL private bucket (1px test image)
   const tinyJpegBase64 = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////2wBDAf//////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAAAP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AK//9k=';
-  const pay = await actions.submitReceipt({ ref: pend.ref, amount: 12000, fileBase64: tinyJpegBase64, contentType: 'image/jpeg', ext: 'jpg' });
+  const pay = await actions.submitReceipt({ ref: pend.ref, amount: 2000, fileBase64: tinyJpegBase64, contentType: 'image/jpeg', ext: 'jpg' });
   assert(pay.ok && !!pay.key, 'e2e: receipt saved to private bucket, key on submission');
   const proof = await actions.getSubmissionProof({ ref: pend.ref });
   assert(proof.ok && !!proof.url, 'e2e: admin gets signed receipt link');
@@ -46,10 +52,10 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
   // Stock before
   const postgres = require('postgres');
   const sql = postgres(process.env.DATABASE_URL, { prepare: false });
-  const before = await sql`select id, available, reserved from variant_skus where price=12000 limit 1`;
+  const before = await sql`select v.id, v.available, v.reserved from variant_skus v join products p on p.id=v.product_id where p.name='Double Soap Holder' limit 1`;
 
   // 3. Admin confirm (seen-in-bank) in one transaction
-  const conf = await actions.confirmOrder({ pendingRef: pend.ref, verifiedAmount: 12000, seenBank: true });
+  const conf = await actions.confirmOrder({ pendingRef: pend.ref, verifiedAmount: 2000, seenBank: true });
   assert(conf.ok, 'e2e: admin confirm inserted order ' + (conf.displayId || 'none') + ' + moved stock');
   const after = await sql`select available, reserved from variant_skus where id=${before[0].id}`;
   assert(after[0].available === before[0].available - 1 && after[0].reserved === before[0].reserved + 1, 'e2e: stock moved available-=1 reserved+=1');

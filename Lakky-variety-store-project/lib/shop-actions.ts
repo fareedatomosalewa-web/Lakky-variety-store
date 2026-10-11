@@ -60,9 +60,16 @@ async function resolveVariantSkuId(attrs: Record<string, string> | undefined, pr
 
 export async function createPending(args: {
   name: string; phone: string; method: string; area: string; day: string;
-  agreedAt: string; lines: CartLine[]; total: number; creditApplied?: number; couponCode?: string;
+  agreedAt: string; lines: CartLine[]; total: number; creditApplied?: number; couponCode?: string; token?: string;
 }) {
   try {
+    if (args.token) {
+      const { customerSession } = await import('./shop-v1');
+      const s: any = await customerSession({ token: args.token });
+      if (!s.ok) return { ok: false as const, reason: 'login-required' };
+    } else {
+      return { ok: false as const, reason: 'login-required' };
+    }
     const phone = normalizePhone(args.phone);
     const cust = await db.insert(customers).values({ fullName: args.name, phone } as any)
       .onConflictDoUpdate({ target: customers.phone, set: { fullName: args.name } })
@@ -104,7 +111,7 @@ export async function createPending(args: {
 
 export async function recordPayment(args: { ref: string; amount: number; date: string; time?: string; reference?: string }) {  try {
     const p = await db.select().from(pendingRefs).limit(1000);
-    const hit = (p as any[]).find((r) => r.ref === args.ref);
+    const hit = (p as any[]).find((r) => r.ref === args.ref || r.referenceId === args.ref || r.reference_id === args.ref);
     if (!hit) return { ok: false as const };
     await db.insert(paymentSubmissions).values({
       pendingId: hit.id, amountClaimed: args.amount,
@@ -129,7 +136,7 @@ export async function confirmOrder(args: { pendingRef: string; verifiedAmount: n
   try {
     if (!args.seenBank) return { ok: false as const, reason: 'seen-bank-required' };
     const all = await db.select().from(pendingRefs).limit(5000);
-    const pend = (all as any[]).find((r) => r.ref === args.pendingRef);
+    const pend = (all as any[]).find((r) => r.ref === args.pendingRef || r.referenceId === args.pendingRef || r.reference_id === args.pendingRef);
     if (!pend || pend.status !== 'pending') return { ok: false as const, reason: 'not-pending' };
     const items = ((await db.select().from(pendingItems).limit(500)) as any[]).filter((i) => i.pendingId === pend.id);
     const subs = ((await db.select().from(paymentSubmissions).limit(500)) as any[]).filter((s) => s.pendingId === pend.id);
@@ -217,7 +224,7 @@ export async function trackOrder(args: { displayId: string; phone: string }) {
 export async function submitReceipt(args: { ref: string; amount: number; fileBase64: string | null; contentType: string; ext: string; bankRef?: string }) {
   try {
     const all = (await db.select().from(pendingRefs).limit(5000)) as any[];
-    const pend = all.find((r) => r.ref === args.ref);
+    const pend = all.find((r) => r.ref === args.ref || r.referenceId === args.ref || r.reference_id === args.ref);
     if (!pend) return { ok: false as const, reason: 'not-found' };
     let key: string | null = null;
     if (args.fileBase64) {
@@ -250,7 +257,7 @@ export async function getReceiptUrl(args: { key: string }) {
 export async function getSubmissionProof(args: { ref: string }) {
   try {
     const all = (await db.select().from(pendingRefs).limit(5000)) as any[];
-    const pend = all.find((r) => r.ref === args.ref);
+    const pend = all.find((r) => r.ref === args.ref || r.referenceId === args.ref || r.reference_id === args.ref);
     if (!pend) return { ok: false as const };
     const subs = ((await db.select().from(paymentSubmissions).limit(500)) as any[]).filter((s) => s.pendingId === pend.id);
     if (!subs.length) return { ok: false as const };

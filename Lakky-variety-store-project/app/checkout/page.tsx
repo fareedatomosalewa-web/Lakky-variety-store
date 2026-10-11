@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { createPending } from '../../lib/shop-actions';
+import { ensureReference } from '../../lib/shop-v1';
 import { quoteWithCredit } from '../../lib/shop-v1';
 import { seedSettings } from '../../db/seed';
 const custKey = () => { try { return JSON.parse(localStorage.getItem('lakky-customer') || 'null'); } catch { return null; } };
@@ -30,6 +31,9 @@ export default function CheckoutPage() {
   const shortcuts = ['Today', 'Tomorrow', 'Day after tomorrow'];
   const submit = async () => {
     if (!name || !phone) { alert('Please type your full name and an active phone number.'); return; }
+    let token = '';
+    try { token = JSON.parse(localStorage.getItem('lakky-customer') || '{}').token || ''; } catch { token = ''; }
+    if (!token) { alert('Please log in or create an account first.'); location.href = '/login'; return; }
     if (method === 'Pickup' && day && !['Today', 'Tomorrow', 'Day after tomorrow', ''].includes(day)) {
       alert('Pickup must be within 1 week. For a later date, please choose Stockpile at the top.');
       return;
@@ -37,10 +41,15 @@ export default function CheckoutPage() {
     if (method === 'Stockpile' && !day) { alert('Please pick a fulfilment date for stockpile.'); }
     const lines = cart.map((l: any) => ({ attrs: l.attrs || { colour: l.colour, size: l.size }, price: l.price, qty: l.qty, addon: l.addon }));
     try {
-      const r: any = await createPending({ name, phone, method, area, day, agreedAt: '', lines, total, creditApplied: quote ? quote.used : 0, couponCode: coupon || undefined });
+      const r: any = await createPending({ name, phone, method, area, day, agreedAt: '', lines, total, creditApplied: quote ? quote.used : 0, couponCode: coupon || undefined, token });
       if (r.ok) {
-        localStorage.setItem('lakky-pending', JSON.stringify({ ref: r.ref, pendingId: r.pendingId, name, phone, method, area, day, total, creditUsed: quote ? quote.used : 0, coupon, live: true }));
-        location.href = '/pay/' + r.ref;
+        let code = r.ref;
+        try {
+          const rr: any = await ensureReference({ pendingRef: r.ref });
+          if (rr.ok) code = rr.referenceId;
+        } catch { /* internal ref stays */ }
+        localStorage.setItem('lakky-pending', JSON.stringify({ ref: code, pendingId: r.pendingId, name, phone, method, area, day, total, creditUsed: quote ? quote.used : 0, coupon, live: true }));
+        location.href = '/pay/' + code;
         return;
       }
     } catch { /* fall through to local demo ref */ }
