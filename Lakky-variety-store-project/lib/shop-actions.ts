@@ -319,7 +319,14 @@ export async function trackOrder(args: { displayId: string; phone: string }) {
     const cust = ((await db.select().from(customers).where(eq(customers.id, p.customerId)).limit(2)) as any[]);
     if (!cust.length || normalizePhone(cust[0].phone) !== phone) return { ok: false as const };
     const stage = p.status === 'confirmed' ? 'confirmed' : p.status === 'under' ? 'underpayment' : p.status === 'rejected' ? 'rejected' : 'checking';
-    return { ok: true as const, pending: true as const, stage, ref: p.referenceId || p.ref, total: p.expectedTotal, status: p.status };
+    const { getMessages } = await import('./shop-v1');
+    let notice: string | null = null;
+    try {
+      const mm: any = await getMessages({ pendingId: p.id });
+      const owner = (mm.messages || []).filter((m: any) => m.sender === 'owner');
+      if (owner.length) notice = owner[owner.length - 1].text;
+    } catch { /* notice stays empty */ }
+    return { ok: true as const, pending: true as const, stage, ref: p.referenceId || p.ref, total: p.expectedTotal, status: p.status, notice };
   } catch { return { ok: false as const }; }
 }
 

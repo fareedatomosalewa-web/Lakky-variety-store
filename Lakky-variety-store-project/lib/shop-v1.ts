@@ -123,6 +123,21 @@ export async function getPendingDetail(args: { ref: string }) {
   } catch { return { ok: false as const }; }
 }
 const REJECT_OK = ['Underpayment', 'Fake receipt', 'Wrong order'];
+export async function underPending(args: { ref: string; admin?: string }) {
+  try {
+    // ADMIN-GATED:underPending
+    if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
+    const sql = conn();
+    const all = await sql`select * from pending_refs where (status='pending' or status='under') and (ref=${args.ref} or reference_id=${args.ref}) limit 2`;
+    const pend = (all as any[])[0];
+    if (!pend) { await sql.end(); return { ok: false as const }; }
+    await sql`update pending_refs set status='under' where id=${pend.id}`;
+    await sql`insert into notifications (customer_id, order_id, type, message) values (${pend.customer_id}, null, 'underpayment', ${'Order ' + pend.ref + ' needs a top-up.'})`;
+    await sql`insert into order_events (order_id, actor, action) values (null, ${args.admin || 'owner'}, ${'pending-under:' + pend.ref})`;
+    await sql.end();
+    return { ok: true as const };
+  } catch { return { ok: false as const }; }
+}
 export async function rejectPending(args: { ref: string; reason: string; note?: string; admin?: string }) {
   try {
     // ADMIN-GATED:rejectPending
@@ -133,7 +148,7 @@ export async function rejectPending(args: { ref: string; reason: string; note?: 
     const pend = (all as any[])[0];
     if (!pend) { await sql.end(); return { ok: false as const }; }
     await sql`update pending_refs set status='rejected' where id=${pend.id}`;
-    await sql`insert into order_messages (order_id, sender, text) values (${pend.id}, 'owner', ${'Order not accepted: ' + reason + (args.note ? ' — ' + args.note : '')})`;
+    await sql`insert into order_messages (order_id, pending_id, sender, text) values (null, ${pend.id}, 'owner', ${'Order not accepted: ' + reason + (args.note ? ' — ' + args.note : '')})`;
     await sql`insert into notifications (customer_id, order_id, type, message) values (${pend.customer_id}, null, 'rejected', ${'Order ' + pend.ref + ' was not accepted: ' + reason})`;
     await sql`insert into order_events (order_id, actor, action, note) values (null, ${args.admin || 'owner'}, 'pending-rejected', ${pend.ref + ': ' + reason})`;
     await sql.end();
@@ -149,7 +164,7 @@ export async function markPartial(args: { ref: string; note: string; admin?: str
     const pend = (all as any[])[0];
     if (!pend) { await sql.end(); return { ok: false as const }; }
     await sql`update pending_refs set status='partial' where id=${pend.id}`;
-    await sql`insert into order_messages (order_id, sender, text) values (${pend.id}, 'owner', ${'Partially accepted: ' + (args.note || '') + ' — reply: store credit, refund for missing items, or cancel all.'})`;
+    await sql`insert into order_messages (order_id, pending_id, sender, text) values (null, ${pend.id}, 'owner', ${'Partially accepted: ' + (args.note || '') + ' — reply: store credit, refund for missing items, or cancel all.'})`;
     await sql`insert into notifications (customer_id, order_id, type, message) values (${pend.customer_id}, null, 'partial', ${'Order ' + pend.ref + ' partially accepted — open it to choose.'})`;
     await sql.end();
     return { ok: true as const };
@@ -319,10 +334,12 @@ export async function postMessage(args: { orderId: number; sender: string; text:
     return { ok: true as const };
   } catch { return { ok: false as const }; }
 }
-export async function getMessages(args: { orderId: number }) {
+export async function getMessages(args: { orderId?: number; pendingId?: number }) {
   try {
     const sql = conn();
-    const rows = await sql`select sender, text, created_at as "at" from order_messages where order_id=${args.orderId} order by id`;
+    const rows = args.orderId
+      ? await sql`select sender, text, created_at as "at" from order_messages where order_id=${args.orderId} order by id`
+      : await sql`select sender, text, created_at as "at" from order_messages where pending_id=${args.pendingId} order by id`;
     await sql.end();
     return { ok: true as const, messages: rows };
   } catch { return { ok: false as const, messages: [] as any[] }; }

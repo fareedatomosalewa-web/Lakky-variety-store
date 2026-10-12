@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { confirmOrder, getSubmissionProof } from '../../../../lib/shop-actions';
 import { useAdminGuard } from '../../../../lib/use-admin-guard';
-import { getOrderThread, getPendingDetail, listFees, listRefunds, decideRefund, markFeePaid, postMessage, rejectPending, advanceOrder } from '../../../../lib/shop-v1';
+import { getOrderThread, getPendingDetail, listFees, listRefunds, decideRefund, markFeePaid, postMessage, rejectPending, advanceOrder, underPending } from '../../../../lib/shop-v1';
 import { stepLabel } from '../../../../lib/pricing';
 const REJECTS = ['Underpayment', 'Fake receipt', 'Wrong order'];
 export default function AdminOrder({ params }: { params: { id: string } }) {
@@ -55,7 +55,10 @@ export default function AdminOrder({ params }: { params: { id: string } }) {
       } catch { setMsg('Not saved — could not reach Supabase. Nothing changed. Try again.'); return; }
       finally { setBusy(false); }
     }
-    if (kind === 'under') setMsg(`Marked Underpayment. Outstanding ₦${(expected - paid).toLocaleString()}. No Order ID, no stock move. Top-up stays linked.`);
+    if (kind === 'under') {
+      const r: any = await underPending({ ref: params.id, admin: 'owner' }).catch(() => null);
+      setMsg(r && r.ok ? `Marked Underpayment in Supabase. Outstanding ₦${(expected - paid).toLocaleString()}. No Order ID, no stock move.` : 'Could not save — try again.');
+    }
     if (kind === 'reject') {
       const r: any = await rejectPending({ ref: params.id, reason, note, admin: 'owner' }).catch(() => null);
       setMsg(r && r.ok ? `Rejected (${reason}). Customer sees the reason.` : 'Rejected. No Order ID, no stock move.');

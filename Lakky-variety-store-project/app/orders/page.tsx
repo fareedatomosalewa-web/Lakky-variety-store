@@ -31,9 +31,9 @@ export default function OrdersPage() {
         const p = r as any;
         const stageText = p.stage === 'checking' ? 'Payment being checked — we will confirm once the money shows in our bank.'
           : p.stage === 'underpayment' ? 'Underpaid — please pay the rest.'
-          : p.stage === 'rejected' ? 'Not accepted — see messages below or contact the shop.'
+          : p.stage === 'rejected' ? 'Not accepted — see below.'
           : 'Confirmed — your Order ID is on its way.';
-        setRes(`${p.ref} — ${stageText} (Expected ₦${Number(p.total).toLocaleString()}).`);
+        setRes(`${p.ref} — ${stageText} (Expected ₦${Number(p.total).toLocaleString()}).${p.notice ? ` Message from shop: ${p.notice}` : ''}`);
         return;
       }
     } catch { /* fall through to not-found */ }
