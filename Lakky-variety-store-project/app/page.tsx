@@ -53,11 +53,14 @@ export default function Home() {
   const fresh = (seedProducts as any[]).filter((p) => (isNew(p, 7) || isRestocked(p, 2)) && (cat === 'All' || catsOf(p).includes(cat)));
   return (<div>
     {ann ? <div className="card"><b>{ann}</b></div> : null}
-    <div className="hero"><h1>Something for every day.</h1><p>Fine things for skin, home, school and style. Pay by bank transfer. Pick up or get delivery.</p><a className="btn" href="#shop" style={{ textDecoration: 'none' }}>Shop now</a></div>
-    <div className="searchbar"><input placeholder="Search products… try face masks" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} /><button className="btn-s" onClick={() => document.getElementById('shop')?.scrollIntoView()} aria-label="Search">🔍</button></div>
+    <div className="hero"><h1>Something for every day.</h1><p>Skin, home, school and style. Pay by transfer, pick up or get delivery.</p><a className="btn hero-btn" href="#shop" style={{ textDecoration: 'none' }}>Shop now</a></div>
+    <div className="searchbar"><span aria-hidden="true">🔍</span><input placeholder="Search products…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} /><button className="btn-s" onClick={() => document.getElementById('shop')?.scrollIntoView()} aria-label="Search">Go</button></div>
     <div style={{ display: 'flex', gap: 8 }}><input type="number" placeholder="Min ₦" value={minP} onChange={(e) => setMinP(e.target.value)} /><input type="number" placeholder="Max ₦" value={maxP} onChange={(e) => setMaxP(e.target.value)} /><select value={sort} onChange={(e) => setSort(e.target.value)}><option value="newest">Newest</option><option value="low-high">Price low–high</option><option value="high-low">Price high–low</option></select></div>
     <h2 id="categories">Categories</h2>
     <div className="catchips">{['All', ...allCats].map((c) => <button key={c} className={cat === c ? 'on' : ''} onClick={() => setCat(c)}>{c}</button>)}</div>
+    <div className="steps">
+      {[['1', 'Choose'], ['2', 'Transfer'], ['3', 'Upload receipt']].map(([n, t]) => <div key={n} className="step"><b>{n}</b><span>{t}</span></div>)}
+    </div>
     <div className="strip">
       <div><a href="/orders">Track your order →</a>{waNumber ? (<span> • <a href={`https://wa.me/${waNumber}`} target="_blank" rel="noreferrer">WhatsApp us</a></span>) : null}</div>
       {isAdmin && missing.length > 0 && <div className="small">To-do (admin only): set {missing.join(', ')} in Admin Settings.</div>}
@@ -129,13 +132,11 @@ function ProductCard({ p }: { p: any }) {
   };
   return (<div className="prod-card" style={soldOutCard ? { opacity: 0.65 } : undefined}>
     <ProductImage p={p} />
-    <div>{isNew(p, 7) ? <span className="badge badge-new">NEW</span> : null}{isRestocked(p, 2) ? <span className="badge">Restocked</span> : null}{showFew ? <span className="badge badge-sale">Few pieces left</span> : null}{soldOutCard ? <span className="badge badge-mut">Sold out</span> : null}</div>
+    <div>{isNew(p, 7) ? <span className="badge badge-new">New</span> : null}{isRestocked(p, 2) ? <span className="badge">Restocked</span> : null}{showFew ? <span className="badge badge-sale">Few pieces left</span> : null}{soldOutCard ? <span className="badge badge-mut">Sold out</span> : null}</div>
     <div className="prod-name">{p.name} <button onClick={wish} aria-label="Save to wishlist" style={{ background: 'none', border: 0, fontSize: 18, cursor: 'pointer' }}>{wished ? '❤️' : '🤍'}</button></div>
-    <div className="small">{descOf(p)}</div>
     {deal
       ? <div><span style={{ textDecoration: 'line-through' }} className="small">₦{from.toLocaleString()}</span> <span className="prod-price">₦{deal.price.toLocaleString()}</span> <span className="badge badge-sale">{deal.label}</span></div>
-      : <div className="prod-price">₦{from.toLocaleString()}</div>}
-    <div className="small">{catsOf(p).join(' • ')}</div>
+      : <div className="prod-price">{multi ? `from ₦${from.toLocaleString()}` : `₦${from.toLocaleString()}`}</div>}
     {!multi && <div style={{ marginTop: 6 }}>{logged ? <button className="btn" style={{ width: '100%' }} disabled={match.available <= 0} onClick={() => add(match)}>{added ? 'Added ✓' : 'Add to Cart'}</button> : <a className="btn-s" href="/login" style={{ textDecoration: 'none' }}>Log in to buy</a>}</div>}
     {multi && logged && <button className="btn-s" style={{ width: '100%', marginTop: 6 }} onClick={() => setOpen(!open)}>{open ? 'Hide options' : 'Choose options'}</button>}
     {multi && !logged && <div style={{ marginTop: 6 }}><a className="btn-s" href="/login" style={{ textDecoration: 'none' }}>Log in to buy</a></div>}
