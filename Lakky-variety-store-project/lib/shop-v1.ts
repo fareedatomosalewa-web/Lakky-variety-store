@@ -658,8 +658,7 @@ export async function mediaViewUrl(args: { key: string }) {
     return await receiptViewUrl(args.key, 'product-images');
   } catch { return { ok: false as const }; }
 }
-export async function addAddon(args: { productName: string; name: string; price: number; stock: number }) {
-  try {
+export async function addAddon(args: { productName: string; name: string; price: number; stock: number }) {  try {
     // ADMIN-GATED:addAddon
     if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
@@ -742,6 +741,40 @@ export async function logShopEvent(args: { customerId?: number; kind: string; de
   try {
     const sql = conn();
     await sql`insert into shop_events (customer_id, kind, detail) values (${args.customerId || null}, ${args.kind}, ${(args.detail || '').slice(0, 300)})`;
+    await sql.end();
+    return { ok: true as const };
+  } catch { return { ok: false as const }; }
+}
+
+// ---- delete a product photo or a whole product (refuses when orders use it) ----
+export async function deleteMedia(args: { id: number }) {
+  try {
+    // ADMIN-GATED:deleteMedia
+    if (!(await requireAdminAction())) return { ok: false as const };
+    const sql = conn();
+    await sql`delete from product_images where id=${args.id}`;
+    await sql.end();
+    return { ok: true as const };
+  } catch { return { ok: false as const }; }
+}
+export async function deleteProduct(args: { name: string }) {
+  try {
+    // ADMIN-GATED:deleteProduct
+    if (!(await requireAdminAction())) return { ok: false as const };
+    const sql = conn();
+    const p = await sql`select id from products where name=${args.name} limit 1`;
+    if (!p.length) { await sql.end(); return { ok: false as const }; }
+    const skus = await sql`select id from variant_skus where product_id=${p[0].id}`;
+    const ids = (skus as any[]).map((s) => s.id);
+    if (ids.length) {
+      const r1 = await sql`select count(*)::int as n from pending_items where variant_sku_id = any(${ids})`;
+      const r2 = await sql`select count(*)::int as n from order_items where variant_sku_id = any(${ids})`;
+      if (r1[0].n + r2[0].n > 0) { await sql.end(); return { ok: false as const, reason: 'in-orders' }; }
+    }
+    await sql`delete from product_addons where product_id=${p[0].id}`;
+    await sql`delete from product_images where product_id=${p[0].id}`;
+    await sql`delete from variant_skus where product_id=${p[0].id}`;
+    await sql`delete from products where id=${p[0].id}`;
     await sql.end();
     return { ok: true as const };
   } catch { return { ok: false as const }; }
