@@ -114,6 +114,7 @@ export const pendingRefs = pgTable('pending_refs', {
   status: text('status').default('pending'),
   agreedAt: timestamp('agreed_at'),
   createdAt: timestamp('created_at').defaultNow(),
+  idempotencyKey: text('idempotency_key').unique(),
 });
 export const pendingItems = pgTable('pending_items', {
   id: serial('id').primaryKey(),
@@ -205,6 +206,7 @@ export const settings = pgTable('settings', {
   reminderEveryDays: integer('reminder_every_days').default(2),
   pickupLocation: text('pickup_location').default(''),
   pickupReveal: boolean('pickup_reveal').default(false),
+  unpaidExpiryMinutes: integer('unpaid_expiry_minutes').default(30),
   shopHours: text('shop_hours').default(''),
   announcementOn: boolean('announcement_on').default(false),
   announcementText: text('announcement_text').default(''),

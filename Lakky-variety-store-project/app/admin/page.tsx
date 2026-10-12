@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useAdminGuard } from '../../lib/use-admin-guard';
-import { listPending, listConfirmed, adminSearch, setProgress, dashboard, exportCsv, remindersDue, listFees, agedStockpile, releaseStockpile, rejectPending } from '../../lib/shop-v1';
+import { listPending, listConfirmed, adminSearch, setProgress, dashboard, exportCsv, remindersDue, listFees, agedStockpile, releaseStockpile, rejectPending, sweepUnpaid } from '../../lib/shop-v1';
 import { confirmOrder } from '../../lib/shop-actions';
 import AdminShell from './shell';
 const ago = (d: any) => {
@@ -29,9 +29,30 @@ export default function AdminDash() {
   const [confirmed, setConfirmed] = useState<any[]>([]);
   const [tab, setTab] = useState('review');
   const [pop, setPop] = useState<any>(null);
+  const [bulkAsk, setBulkAsk] = useState('');
   const [popMsg, setPopMsg] = useState('');
   const [popReason, setPopReason] = useState('Underpayment');
+  const [bulkMsg, setBulkMsg] = useState('');
+  const bulkApply = async () => {
+    const refs = sel.map((id) => { const it = items.find((x) => x.id === id); return it ? (it.referenceId || it.ref) : null; }).filter(Boolean) as string[];
+    let ok = 0, fail = 0;
+    if (bulkAsk.startsWith('Confirm')) {
+      for (const ref of refs) {
+        const it = items.find((x) => (x.referenceId || x.ref) === ref);
+        const r: any = await confirmOrder({ pendingRef: ref, verifiedAmount: Number(it.submitted || 0), seenBank: true }).catch(() => null);
+        if (r && r.ok) ok++; else fail++;
+      }
+    } else {
+      for (const ref of refs) {
+        const r: any = await rejectPending({ ref, reason: popReason, admin: 'owner' }).catch(() => null);
+        if (r && r.ok) ok++; else fail++;
+      }
+    }
+    setBulkMsg(`Done: ${ok} applied, ${fail} skipped.`);
+    setBulkAsk(''); setSel([]); load();
+  };
   const load = async () => {
+    await sweepUnpaid().catch(() => null);
     const r: any = await listPending().catch(() => null);
     if (r && r.ok) setItems(r.rows);
     const c: any = await listConfirmed().catch(() => null);
@@ -96,15 +117,15 @@ export default function AdminDash() {
     <div className="tablewrap"><table>
       <thead><tr><th></th><th>REF</th><th>CUSTOMER</th><th>SUBMITTED</th><th>EXPECTED</th><th>CLAIMED</th><th>RECEIPT</th><th>STATUS</th><th></th></tr></thead>
       <tbody>{rows.map((o) => <tr key={o.id || o.displayId}>
-        <td><input type="checkbox" checked={sel.includes(o.id)} onChange={() => toggle(o.id)} /></td>
-        <td><b>{o.referenceId || o.ref || o.displayId}</b></td>
-        <td>{o.name}<br /><span className="mask">{mask(o.phone)}</span>{o.method ? ` · ${o.method}` : ''}</td>
-        <td>{o.at ? ago(o.at) : '—'}</td>
-        <td>₦{Number(o.total).toLocaleString()}</td>
-        <td style={Number(o.submitted || o.paid || 0) < Number(o.total) ? { color: 'var(--red)', fontWeight: 700 } : undefined}>₦{Number(o.submitted || o.paid || 0).toLocaleString()}</td>
-        <td>{o.submitted ? '🧾 Yes' : '—'}</td>
-        <td><span className="badge">{o.status || o.st}</span></td>
-        <td><a className="btn" style={{ textDecoration: 'none', padding: '8px 14px', minHeight: 0 }} href={`/admin/orders/${o.referenceId || o.ref || o.displayId}`}>Review</a> <button className="btn-s" onClick={() => { setPop({ mode: 'confirm', ref: o.referenceId || o.ref }); }}>✓</button> <button className="btn-d" onClick={() => { setPop({ mode: 'reject', ref: o.referenceId || o.ref }); }}>✕</button></td>
+        <td data-th="Pick"><input type="checkbox" checked={sel.includes(o.id)} onChange={() => toggle(o.id)} /></td>
+        <td data-th="Ref"><b>{o.referenceId || o.ref || o.displayId}</b></td>
+        <td data-th="Customer">{o.name}<br /><span className="mask">{mask(o.phone)}</span>{o.method ? ` · ${o.method}` : ''}</td>
+        <td data-th="Submitted">{o.at ? ago(o.at) : '—'}</td>
+        <td data-th="Expected">₦{Number(o.total).toLocaleString()}</td>
+        <td data-th="Claimed" style={Number(o.submitted || o.paid || 0) < Number(o.total) ? { color: 'var(--red)', fontWeight: 700 } : undefined}>₦{Number(o.submitted || o.paid || 0).toLocaleString()}</td>
+        <td data-th="Receipt">{o.submitted ? '🧾 Yes' : '—'}</td>
+        <td data-th="Status"><span className="badge">{o.status || o.st}</span></td>
+        <td data-th="Open"><a className="btn" style={{ textDecoration: 'none', padding: '8px 14px', minHeight: 0 }} href={`/admin/orders/${o.referenceId || o.ref || o.displayId}`}>Review</a> <button className="btn-s" onClick={() => { setPop({ mode: 'confirm', ref: o.referenceId || o.ref }); setPopMsg(''); }}>✓</button> <button className="btn-d" onClick={() => { setPop({ mode: 'reject', ref: o.referenceId || o.ref }); setPopMsg(''); }}>✕</button></td>
       </tr>)}</tbody>
     </table></div>
     {rows.length === 0 && <div className="empty">Nothing here.</div>}
@@ -112,7 +133,9 @@ export default function AdminDash() {
       {pop.mode === 'reject' && <div><select value={popReason} onChange={(e) => setPopReason(e.target.value)}>{['Underpayment', 'Fake receipt', 'Wrong order'].map((r) => <option key={r} value={r}>{r}</option>)}</select></div>}
       <div><b>{popMsg}</b></div>
       <button className="btn" onClick={quick}>Yes</button> <button className="btn-s" onClick={() => setPop(null)}>Back</button></div>)}
-    <div className="card"><b>Bulk progress ({sel.length} picked)</b><div>{['packaged', 'onway', 'ready', 'completed'].map((t) => <button key={t} className="btn-s" style={{ marginRight: 6 }} onClick={() => bulk(t)}>→ {t}</button>)}</div></div>
+    <div className="card"><b>Bulk ({sel.length} picked): progress</b><div>{['packaged', 'onway', 'ready', 'completed'].map((t) => <button key={t} className="btn-s" style={{ marginRight: 6 }} onClick={() => bulk(t)}>→ {t}</button>)}</div>
+      <div style={{ marginTop: 8 }}><b>Bulk decide (pending only):</b> {bulkAsk ? (<span>{bulkAsk} <button className="btn" onClick={bulkApply}>Yes, apply</button> <button className="btn-s" onClick={() => setBulkAsk('')}>Back</button></span>) : (<span><button className="btn-s" onClick={() => setBulkAsk(`Confirm ${sel.length} orders?`)}>Confirm picked</button> <button className="btn-d" onClick={() => setBulkAsk(`Reject ${sel.length} orders?`)}>Reject picked</button></span>)}</div>
+      {bulkMsg && <div><b>{bulkMsg}</b></div>}</div>
     {stats && <div className="card small">Today sales ₦{Number(stats.salesToday).toLocaleString()} • open orders {stats.openOrders} • stockpiled {stats.stockpiled} • store credit owed ₦{Number(stats.creditOwed).toLocaleString()} • <button className="btn-s" onClick={() => csv('orders')}>Orders CSV</button> <button className="btn-s" onClick={() => csv('customers')}>Customers CSV</button></div>}
     {remind.length > 0 && <div className="card"><b>Not-completed reminders due ({remind.length})</b>{remind.map((o: any) => <div key={o.id} className="small">{o.displayId} • {o.st} — remind customer + owner</div>)}</div>}
     {aged.length > 0 && <div className="card"><b>Past max stockpile days ({aged.length}) — contact first, then release</b>{aged.map((o: any) => <div key={o.id} className="small">{o.displayId} • {o.name} • uncollected {o.days} days (max {o.maxd}) <button className="btn-d" onClick={async () => { const { releaseStockpile } = await import('../../lib/shop-v1'); await releaseStockpile({ orderId: o.id, actor: 'owner' }); load(); }}>Release to stock</button></div>)}</div>}

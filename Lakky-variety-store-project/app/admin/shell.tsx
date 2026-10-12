@@ -7,8 +7,8 @@ import { authClient } from '../../lib/auth-client';
 const NAV = [
   { href: '/admin', label: 'Orders' },
   { href: '/admin/products', label: 'Products' },
-  { href: '/admin/settings', label: 'Settings' },
   { href: '/admin/reports', label: 'Reports' },
+  { href: '/admin/settings', label: 'Settings' },
 ];
 
 export default function AdminShell({ children }: { children: React.ReactNode }) {

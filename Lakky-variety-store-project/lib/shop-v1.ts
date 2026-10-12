@@ -780,6 +780,50 @@ export async function deleteProduct(args: { name: string }) {
   } catch { return { ok: false as const }; }
 }
 
+// ---- date-range report from Supabase (plain numbers for the screen, CSV kept) ----
+export async function reportRange(args: { from: string; to: string }) {
+  try {
+    // ADMIN-GATED:reportRange
+    if (!(await requireAdminAction())) return { ok: false as const };
+    const sql = conn();
+    const rows = await sql`select o.display_id as id, o.total, o.paid_amount as paid, o.payment_status as pay, o.fulfilment_status as st, o.fulfilment_method as method, o.confirmed_at as at, o.stockpile_status as stock, (select coalesce(sum(amount),0)::int from fee_payments f where f.order_id=o.id and f.status='verified') as "feePaid" from orders o where o.confirmed_at::date >= ${args.from} and o.confirmed_at::date <= ${args.to} order by o.id limit 2000`;
+    await sql.end();
+    const list = rows as any[];
+    const sum = (f: (o: any) => number) => list.reduce((s, o) => s + (f(o) || 0), 0);
+    const has = (v: string, ...ws: string[]) => list.filter((o) => ws.includes(String(v === 'pay' ? o.pay : o.st)));
+    return {
+      ok: true as const,
+      summary: {
+        placed: list.length,
+        approved: has('pay', 'confirmed', 'overpayment').length,
+        rejected: list.filter((o) => o.st === 'cancelled').length,
+        under: has('pay', 'underpayment').length,
+        over: has('pay', 'overpayment').length,
+        pickup: list.filter((o) => o.method === 'Pickup').length,
+        delivery: list.filter((o) => o.method === 'Delivery').length,
+        stockpiled: list.filter((o) => o.stock === 'held').length,
+        money: sum((o) => Number(o.paid)),
+      },
+      rows: list,
+    };
+  } catch { return { ok: false as const }; }
+}
+
+// ---- sweep: unpaid drafts with no receipt past the owner-set minutes expire ----
+export async function sweepUnpaid() {
+  try {
+    // ADMIN-GATED:sweepUnpaid
+    if (!(await requireStaffAction())) return { ok: false as const };
+    const sql = conn();
+    const s = await sql`select unpaid_expiry_minutes as mins from settings limit 1`;
+    const mins = Math.max(1, Number(s[0]?.mins ?? 30));
+    const old = await sql`select p.id from pending_refs p where p.status='draft' and p.created_at < now() - (${mins} || ' minutes')::interval and not exists (select 1 from payment_submissions s where s.pending_id=p.id)`;
+    for (const r of old as any[]) await sql`update pending_refs set status='expired' where id=${r.id}`;
+    await sql.end();
+    return { ok: true as const, expired: (old as any[]).length };
+  } catch { return { ok: false as const, expired: 0 }; }
+}
+
 // ---- dashboard numbers + exports ----
 export async function dashboard() {
   try {

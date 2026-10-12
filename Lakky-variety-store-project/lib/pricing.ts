@@ -5,12 +5,12 @@ const STEP_LABEL: Record<string, string> = {
   cancelled: 'Cancelled', 'cancel-requested': 'Cancellation requested',
 };
 export function stepLabel(st: string): string { return STEP_LABEL[st] || st; }
-const REFCHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const REFCHARS = '23456789';
 export function makeRef(): string {
-  const b = new Uint8Array(6);
+  const b = new Uint8Array(4);
   (globalThis.crypto as Crypto).getRandomValues(b);
-  let s = 'REF-';
-  for (let i = 0; i < 6; i++) s += REFCHARS[b[i] % REFCHARS.length];
+  let s = '';
+  for (let i = 0; i < 4; i++) s += REFCHARS[b[i] % REFCHARS.length];
   return s;
 }
 export function discountFor(p: any, now = new Date()) {

@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { trackOrder } from '../../lib/shop-actions';
+import { useCustomerOnly } from '../../lib/use-customer-only';
 import { cancelOrder, getMessages, postMessage, requestMoney, setProgress, addReview, reportProblem } from '../../lib/shop-v1';
 const STEP_LABEL: Record<string, string> = { pending: 'Waiting for confirmation', processing: 'Confirmed', packaged: 'Being packed', ready: 'Ready for pickup', onway: 'On the way', completed: 'Completed', cancelled: 'Cancelled', 'cancel-requested': 'Cancellation requested' };
 const stepName = (s: string) => STEP_LABEL[s] || s;
@@ -50,6 +51,7 @@ function TimelineCard({ o }: { o: any }) {
   </div>);
 }
 export default function OrdersPage() {
+  useCustomerOnly();
   const [orderId, setOrderId] = useState(''); const [phone, setPhone] = useState(''); const [res, setRes] = useState('');
   const [o, setO] = useState<any>(null);
   const [msgs, setMsgs] = useState<any[]>([]);

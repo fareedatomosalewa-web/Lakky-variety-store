@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { FALLBACK_DESCRIPTION, driveImage, seedAddons, seedProducts } from '../../../db/seed';
+import { useCustomerOnly } from '../../../lib/use-customer-only';
 import { tierPrice } from '../../../lib/pricing';
 import { listAddons as getAddons, getMedia, logShopEvent } from '../../../lib/shop-v1';
 function loadCart(): any[] { try { return JSON.parse(localStorage.getItem('lakky-cart') || '[]'); } catch { return []; } }
@@ -9,6 +10,7 @@ function saveCart(cart: any[]) {
   window.dispatchEvent(new Event('lakky-cart-updated'));
 }
 export default function ProductPage({ params }: { params: { id: string } }) {
+  useCustomerOnly();
   const p: any = (seedProducts as any[])[Number(params.id)];
   const dims: string[] = p ? [...new Set((p.variants as any[]).flatMap((v: any) => Object.keys(v.attrs)))] : [];
   const [sel, setSel] = useState<Record<string, string>>(() => Object.fromEntries(dims.map((d) => [d, p.variants[0].attrs[d]])));

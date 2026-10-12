@@ -1,6 +1,8 @@
 'use client';
+import { useCustomerOnly } from '../../lib/use-customer-only';
 import { useEffect, useState } from 'react';
 export default function CartPage() {
+  useCustomerOnly();
   const [cart, setCart] = useState<any[]>([]);
   const [logged, setLogged] = useState(false);
   useEffect(() => {

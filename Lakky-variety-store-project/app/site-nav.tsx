@@ -5,6 +5,8 @@ import { usePathname } from 'next/navigation';
 import CartBadge from './cart-badge';
 
 export function SiteHeader() {
+  const path = usePathname();
+  if (path.startsWith('/admin') || path.startsWith('/staff')) return null;
   return (
     <div className="tophead"><div className="tophead-in">
       <Link href="/" style={{ textDecoration: 'none' }}><span className="brand">Lakky Variety Store</span></Link>
@@ -23,6 +25,7 @@ const tabs = [
 
 export function BottomNav() {
   const path = usePathname();
+  if (path.startsWith('/admin') || path.startsWith('/staff')) return null;
   return (
     <nav className="bottomnav">
       {tabs.map((t) => (

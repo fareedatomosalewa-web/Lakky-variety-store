@@ -5,7 +5,7 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); fails++; } else 
 const seen = new Set();
 for (let i = 0; i < 20; i++) {
   const r = makeRef();
-  assert(/^REF-[A-HJ-NP-Z2-9]{6}$/.test(r), 'REF pattern short, no O/0/I/1: ' + r);
+  assert(/^[2-9]{4}$/.test(r), 'REF pattern 4 digits, no 0/1: ' + r);
   assert(!seen.has(r), 'REF unique');
   seen.add(r);
 }

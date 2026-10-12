@@ -10,7 +10,7 @@ export default async function TermsPage() {
   const hold = s.freeHoldDays, fee = Number(s.globalDailyFee).toLocaleString(), abandon = s.abandonDays;
   return (<div className="card"><h2>Our rules (plain words)</h2>
     <p>1. Pay the exact amount shown, to the bank account shown. Then upload your receipt.</p>
-    <p>2. Your reference. After you order, you get a reference like REF-K7Q2M9. Writing it in your bank's remark box is your choice, but it helps. If there is a problem, we can find your order fast. If you pay by USSD or your bank has no remark box, that's fine. Always keep your receipt.</p>
+    <p>2. Your reference. After you order, you get a 4-digit Reference ID like 4827. Writing it in your bank's remark box is your choice, but it helps. If there is a problem, we can find your order fast. If you pay by USSD or your bank has no remark box, that's fine. Always keep your receipt.</p>
     <p>3. We confirm your payment when we see the money in our bank. Then you get your Order ID.</p>
     <p>4. We keep your items safe for {hold} days. This is free. Each order is kept apart so nothing gets mixed up.</p>
     <p>5. After {hold} days, a small fee of ₦{fee} per day starts. This pays for the space and care. While your fees are paid up to date, we are responsible for your items. If something is lost, missing or mixed up, we will replace it or give you store credit or a refund.</p>
@@ -18,7 +18,7 @@ export default async function TermsPage() {
     <p>7. Please check your items as soon as you receive them. For pickup, check before you leave. For delivery, check when it arrives. If anything is missing or wrong, tell us within 2 days.</p>
     <p>8. If your item runs out before we confirm your payment, you choose: store credit for your next order, or a refund. A refund goes only to the same bank account you paid from. If you give a different account, we cannot refund you.</p>
     <h3>Order ID and Reference ID</h3>
-    <p>Your Order ID (like LVS-009-9270) is the name of your order in this app. Use it to find and track your order. Your Reference ID (like REF-K7Q2M9) is shown beside our account number. Write it in your bank remark box so we can match your payment fast, even if your receipt is blurry.</p>
+    <p>Your Order ID (like LVS-009-9270) is the name of your order in this app. Use it to find and track your order. Your Reference ID (like 4827) is shown beside our account number. Write it in your bank remark box so we can match your payment fast, even if your receipt is blurry.</p>
     <h3>Underpayment and overpayment</h3>
     <p>If you pay less than the amount shown, your order waits until you pay the rest. If you pay more, we process your order and tell you the extra amount. You choose: keep it as store credit or get a refund.</p>
     <h3>Pay only to the account on your screen</h3>

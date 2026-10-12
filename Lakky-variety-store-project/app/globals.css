@@ -87,4 +87,12 @@ th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line)}
 .claimbox b{color:var(--red)}
 .btn-ok{background:var(--green);color:#fff;border:0;border-radius:var(--radius-s);padding:12px 22px;font-weight:700;font-size:15px;cursor:pointer;font-family:inherit;min-height:44px}
 .tablewrap{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:0 1px 3px rgba(90,41,72,.06)}
+@media (max-width:640px){
+  .tablewrap{overflow-x:visible}
+  .tablewrap thead{display:none}
+  .tablewrap table,.tablewrap tbody,.tablewrap tr,.tablewrap td{display:block;width:100%}
+  .tablewrap tr{border-bottom:2px solid var(--line);padding:6px 4px}
+  .tablewrap td{border:0;padding:3px 8px}
+  .tablewrap td[data-th]::before{content:attr(data-th) ": ";font-size:12px;color:var(--muted);font-weight:700}
+}
 .mask{color:var(--muted)}

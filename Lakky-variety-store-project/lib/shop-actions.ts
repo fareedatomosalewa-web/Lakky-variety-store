@@ -65,6 +65,7 @@ export async function getSettings() {
         newTagDays: s.newTagDays ?? 7, reportWindowHours: s.reportWindowHours ?? 48,
         reminderFirstDays: s.reminderFirstDays ?? 2, reminderEveryDays: s.reminderEveryDays ?? 2,
         pickupLocation: s.pickupLocation || '', pickupReveal: !!s.pickupReveal,
+        unpaidExpiryMinutes: s.unpaidExpiryMinutes ?? 30,
         shopHours: s.shopHours || '', announcementOn: !!s.announcementOn,
         announcementText: s.announcementText || '', socialLinks: s.socialLinks || [],
         aboutText: s.aboutText || '', helpText: s.helpText || '',
@@ -76,7 +77,7 @@ export async function getSettings() {
 export async function saveSettings(patch: Record<string, unknown>) {
   try {
     if (!(await requireAdminAction())) return { ok: false as const, reason: 'admin-only' };
-    const allowed = ['bankDetails', 'globalDailyFee', 'freeHoldDays', 'overpaymentThreshold', 'underpaymentExpiryDays', 'abandonDays', 'fulfilmentDays', 'pickupNote', 'stockpileFeePerDay', 'maxStockpileDays', 'creditCashMinimum', 'restockTagDays', 'newTagDays', 'reportWindowHours', 'reminderFirstDays', 'reminderEveryDays', 'pickupLocation', 'pickupReveal', 'shopHours', 'announcementOn', 'announcementText', 'socialLinks', 'aboutText', 'helpText'] as const;
+    const allowed = ['bankDetails', 'globalDailyFee', 'freeHoldDays', 'overpaymentThreshold', 'underpaymentExpiryDays', 'abandonDays', 'fulfilmentDays', 'pickupNote', 'stockpileFeePerDay', 'maxStockpileDays', 'creditCashMinimum', 'restockTagDays', 'newTagDays', 'reportWindowHours', 'reminderFirstDays', 'reminderEveryDays', 'pickupLocation', 'pickupReveal', 'shopHours', 'announcementOn', 'announcementText', 'socialLinks', 'aboutText', 'helpText', 'unpaidExpiryMinutes'] as const;
     const clean: Record<string, unknown> = {};
     for (const k of allowed) if (patch[k] !== undefined) clean[k] = patch[k];
     if (!Object.keys(clean).length) return { ok: false as const };
@@ -100,7 +101,7 @@ async function resolveVariantSkuId(attrs: Record<string, string> | undefined, pr
 
 export async function createPending(args: {
   name: string; phone: string; method: string; area: string; day: string;
-  agreedAt: string; lines: CartLine[]; total: number; creditApplied?: number; couponCode?: string; token?: string;
+  agreedAt: string; lines: CartLine[]; total: number; creditApplied?: number; couponCode?: string; token?: string; idemKey?: string;
 }) {
   try {
     if (args.token) {
@@ -174,11 +175,19 @@ export async function createPending(args: {
     const balRows = bal.rows || bal;
     const serverUsed = Math.min(balRows.length ? Number(balRows[0].b) : 0, gross);
     const serverTotal = Math.max(0, gross - serverUsed);
+    // Idempotency: same tap twice (or retry) returns the SAME pending, never a second one.
+    if (args.idemKey) {
+      const dup: any = await db.execute(dsql`select id, ref from pending_refs where idempotency_key = ${args.idemKey} limit 1`);
+      const drows = dup.rows || dup;
+      if (drows.length) {
+        return { ok: true as const, ref: drows[0].ref, pendingId: drows[0].id, total: serverTotal, creditUsed: serverUsed, duplicate: true as const };
+      }
+    }
     const prow = await db.insert(pendingRefs).values({
-      ref, referenceId, customerId,
+      ref, referenceId, customerId, idempotencyKey: args.idemKey || null,
       fulfilment: { method: args.method, area: args.area, day: args.day },
       expectedTotal: serverTotal, creditApplied: serverUsed, couponCode: couponCode || null,
-      status: 'pending', agreedAt: args.agreedAt ? new Date(args.agreedAt) : null,
+      status: 'draft', agreedAt: args.agreedAt ? new Date(args.agreedAt) : null,
     } as any).returning({ id: pendingRefs.id });
     const pendingId = (prow as any[])[0].id;
     for (const l of args.lines) {
@@ -296,17 +305,18 @@ export async function trackOrder(args: { displayId: string; phone: string }) {
     const order = (found as any[])[0];
     if (order) {
       const cust = ((await db.select().from(customers).where(eq(customers.id, order.customerId)).limit(2)) as any[]);
-      if (!cust.length || normalizePhone(cust[0].phone) !== phone) return { ok: false as const };    const sets = await db.select().from(settings).limit(1);
-      const rate = (sets[0] as any)?.globalDailyFee ?? 500;
+      if (!cust.length || normalizePhone(cust[0].phone) !== phone) return { ok: false as const };    const sets = await db.select().from(settings).limit(1);      const rate = (sets[0] as any)?.globalDailyFee ?? 500;
       const today = lagosToday();
       const freeUntil = String(order.freeUntil || '').slice(0, 10);
       const extraDays = freeUntil && today > freeUntil
         ? Math.ceil((new Date(today + 'T12:00:00Z').getTime() - new Date(freeUntil + 'T12:00:00Z').getTime()) / 86400000)
         : 0;
+      const pref = order.pendingId ? ((await db.select({ ref: pendingRefs.ref, referenceId: pendingRefs.referenceId }).from(pendingRefs).where(eq(pendingRefs.id, order.pendingId)).limit(2)) as any[]) : [];
+      const refCode = pref.length ? (pref[0].referenceId || pref[0].ref) : '';
       return {
         ok: true as const,
         order: {
-          id: order.id, displayId: order.displayId, status: order.paymentStatus, fulfilment: order.fulfilmentStatus,
+          id: order.id, displayId: order.displayId, ref: refCode, status: order.paymentStatus, fulfilment: order.fulfilmentStatus,
           total: order.total, paid: order.paidAmount,
           confirmedAt: order.confirmedAt, freeUntil, extraDays, fee: extraDays * rate, rate,
         },
@@ -349,7 +359,7 @@ export async function submitReceipt(args: { ref: string; amount: number; fileBas
       pendingId: pend.id, amountClaimed: args.amount,
       transferDate: lagosToday(), proofUrl: key, reference: args.bankRef || null, status: 'pending',
     } as any);
-    await db.update(pendingRefs).set({ agreedAt: new Date() } as any).where(eq(pendingRefs.id, pend.id));
+    await db.update(pendingRefs).set({ agreedAt: new Date(), status: 'pending' } as any).where(eq(pendingRefs.id, pend.id));
     return { ok: true as const, key };
   } catch { return { ok: false as const, reason: 'error' }; }
 }

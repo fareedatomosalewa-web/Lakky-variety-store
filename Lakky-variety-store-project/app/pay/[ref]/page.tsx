@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { getSettings, submitReceipt } from '../../../lib/shop-actions';
 import { ensureReference } from '../../../lib/shop-v1';
 import Steps from '../../checkout/steps';
+import { useCustomerOnly } from '../../../lib/use-customer-only';
 import { seedSettings } from '../../../db/seed';
 
 function copyText(t: string, done: () => void) {
@@ -38,6 +39,7 @@ function compressImage(file: File): Promise<{ base64: string; ext: string; type:
 }
 
 export default function PayPage({ params }: { params: { ref: string } }) {
+  useCustomerOnly();
   const [p, setP] = useState<any>({});
   const [s, setS] = useState<any>(seedSettings);
   const [file, setFile] = useState<{ base64: string; ext: string; type: string } | null>(null);

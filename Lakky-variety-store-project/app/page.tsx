@@ -3,10 +3,12 @@ import { useEffect, useState } from 'react';
 import { FALLBACK_DESCRIPTION, driveImage, seedAddons, seedProducts, seedSettings } from '../db/seed';
 import { discountFor, isNew, isRestocked } from '../lib/pricing';
 import { checkAdmin } from '../lib/admin-guard';
+import { useCustomerOnly } from '../lib/use-customer-only';
 const isSet = (v: unknown) => v !== undefined && v !== null && String(v).trim() !== '' && !String(v).includes('FILL-IN');
 const catsOf = (p: any): string[] => String(p.category || '').split(',').map((c) => c.trim()).filter(Boolean);
 const descOf = (p: any) => (p.description && String(p.description).trim() ? p.description : FALLBACK_DESCRIPTION);
 export default function Home() {
+  useCustomerOnly();
   const [s, setS] = useState<any>(seedSettings);
   const [isAdmin, setIsAdmin] = useState(false);
   const [q, setQ] = useState('');

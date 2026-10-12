@@ -7,7 +7,7 @@ const DEFAULTS: any = {
   ...seedSettings, stockpileFeePerDay: 50, maxStockpileDays: 60, creditCashMinimum: 5000,
   restockTagDays: 2, newTagDays: 7, reportWindowHours: 48, reminderFirstDays: 2, reminderEveryDays: 2,
   pickupLocation: '', pickupReveal: false, shopHours: '', announcementOn: false, announcementText: '',
-  socialLinks: [], aboutText: '', helpText: '',
+  socialLinks: [], aboutText: '', helpText: '', unpaidExpiryMinutes: 30,
 };
 export default function AdminSettings() {
   const allowed = useAdminGuard();
@@ -22,7 +22,7 @@ export default function AdminSettings() {
     });
   }, []);
   const save = async () => {
-    const keys = ['bankDetails', 'globalDailyFee', 'freeHoldDays', 'overpaymentThreshold', 'underpaymentExpiryDays', 'abandonDays', 'fulfilmentDays', 'pickupNote', 'stockpileFeePerDay', 'maxStockpileDays', 'creditCashMinimum', 'restockTagDays', 'newTagDays', 'reportWindowHours', 'reminderFirstDays', 'reminderEveryDays', 'pickupLocation', 'pickupReveal', 'shopHours', 'announcementOn', 'announcementText', 'socialLinks', 'aboutText', 'helpText'];
+    const keys = ['bankDetails', 'globalDailyFee', 'freeHoldDays', 'overpaymentThreshold', 'underpaymentExpiryDays', 'abandonDays', 'fulfilmentDays', 'pickupNote', 'stockpileFeePerDay', 'maxStockpileDays', 'creditCashMinimum', 'restockTagDays', 'newTagDays', 'reportWindowHours', 'reminderFirstDays', 'reminderEveryDays', 'pickupLocation', 'pickupReveal', 'shopHours', 'announcementOn', 'announcementText', 'socialLinks', 'aboutText', 'helpText', 'unpaidExpiryMinutes'];
     const patch: any = {};
     for (const k of keys) patch[k] = (s as any)[k];
     const r: any = await saveSettings(patch);
@@ -58,6 +58,7 @@ export default function AdminSettings() {
     <div>Social links (one per line: name | url)<textarea placeholder="" value={((s as any).socialLinks || []).join('\n')} onChange={(e) => setS({ ...s, socialLinks: e.target.value.split('\n').map((l) => l.trim()).filter(Boolean) })} /></div>
     <div>Fulfilment days (comma list)<input value={(s.fulfilmentDays || []).join(',')} onChange={e=>setS({...s,fulfilmentDays:e.target.value.split(',')})} /></div>
     <div>Pickup note{txt('pickupNote')}</div>
+    <div>Unpaid orders auto-cancel after (minutes, no receipt){num('unpaidExpiryMinutes')}</div>
     <div>About the shop{area('aboutText')}</div>
     <div>Help / Contact text{area('helpText')}</div>
     <h3>Tags and windows</h3>
