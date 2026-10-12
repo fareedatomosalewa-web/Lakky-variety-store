@@ -17,19 +17,27 @@ export default function OrdersPage() {
   const loadMsgs = async (id: number) => { const r: any = await getMessages({ orderId: id }).catch(() => null); if (r && r.ok) setMsgs(r.messages); };
   const lookup = async () => {
     if (!orderId || !phone) { setRes('Both Order ID and matching phone are required. Phone alone cannot retrieve.'); return; }
+    setO(null);
     try {
       const r: any = await trackOrder({ displayId: orderId, phone });
-      if (r.ok) {
+      if (r.ok && r.order) {
         setO({ ...r.order, phone });
         const oo = r.order;
         setRes(`Found ${oo.displayId} — ${oo.status} — now: ${stepName(oo.fulfilment)} — paid ₦${Number(oo.paid).toLocaleString()} of ₦${Number(oo.total).toLocaleString()} — free until ${oo.freeUntil} — fee ₦${Number(oo.fee).toLocaleString()} (${oo.extraDays} days × ₦${Number(oo.rate).toLocaleString()}).`);
         loadMsgs(oo.id);
         return;
       }
-    } catch { /* local fallback below */ }
-    const last = JSON.parse(localStorage.getItem('lakky-last-proof') || '{}');
-    if (last.phone === phone) setRes(`Found: ${orderId} — ${last.status || 'Pending'} — holding countdown + fee shown after confirmation.`);
-    else setRes('No match. Check Order ID + phone.');
+      if (r.ok && (r as any).pending) {
+        const p = r as any;
+        const stageText = p.stage === 'checking' ? 'Payment being checked — we will confirm once the money shows in our bank.'
+          : p.stage === 'underpayment' ? 'Underpaid — please pay the rest.'
+          : p.stage === 'rejected' ? 'Not accepted — see messages below or contact the shop.'
+          : 'Confirmed — your Order ID is on its way.';
+        setRes(`${p.ref} — ${stageText} (Expected ₦${Number(p.total).toLocaleString()}).`);
+        return;
+      }
+    } catch { /* fall through to not-found */ }
+    setRes('No match. Check the code + phone. Use your Reference ID (REF-…) before confirm, Order ID after.');
   };
   const send = async () => {
     if (!draft.trim() || !o) return;
@@ -63,8 +71,8 @@ export default function OrdersPage() {
     setProb(''); alert('Problem sent. The owner will review it.');
   };
   return (<div><div className="card"><h2>Track orders — ID + phone required</h2>
-    <div>Format: LVS-009-9270 (serial + last4 of phone). 5 wrong tries/hour/IP → locked 1 hr. Last4 search supported in admin.</div>
-    <input placeholder="Order ID e.g. LVS-001" value={orderId} onChange={e=>setOrderId(e.target.value)} />
+    <div>Use your Reference ID (REF-…) before we confirm, Order ID after. 5 wrong tries/hour/IP → locked 1 hr.</div>
+    <input placeholder="Reference ID or Order ID" value={orderId} onChange={e=>setOrderId(e.target.value)} />
     <input placeholder="Phone used at checkout" value={phone} onChange={e=>setPhone(e.target.value)} />
     <button className="btn" onClick={lookup}>Track</button><div>{res}</div></div>
     {o && o.id && (<div className="card"><h3>Messages about {o.displayId}</h3>

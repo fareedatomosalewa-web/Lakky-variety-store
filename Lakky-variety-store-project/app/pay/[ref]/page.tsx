@@ -42,6 +42,7 @@ export default function PayPage({ params }: { params: { ref: string } }) {
   const [file, setFile] = useState<{ base64: string; ext: string; type: string } | null>(null);
   const [fileErr, setFileErr] = useState('');
   const [box1, setBox1] = useState(false); const [box2, setBox2] = useState(false);
+  const [sendErr, setSendErr] = useState('');
   const [copied, setCopied] = useState(false);
   const [copiedAcct, setCopiedAcct] = useState(false);
   const [refId, setRefId] = useState('');
@@ -69,11 +70,11 @@ export default function PayPage({ params }: { params: { ref: string } }) {
   const canSubmit = !sending && box1 && box2 && (total === 0 || file !== null);
   const submit = async () => {
     if (!canSubmit) return;
-    setSending(true);
+    setSending(true); setSendErr('');
     try {
       const r: any = await submitReceipt({ ref: params.ref, amount: total, fileBase64: file ? file.base64 : null, contentType: file ? file.type : '', ext: file ? file.ext : '', bankRef: typedRef });
-      if (!r.ok) { setSending(false); return; }
-    } catch { /* fall through to local confirmation */ }
+      if (!r.ok) { setSending(false); setSendErr(r.reason === 'receipt-required' ? 'Please upload your receipt photo first.' : 'Could not save. Check your connection and tap Submit again — nothing was sent.'); return; }
+    } catch { setSending(false); setSendErr('Could not save. Check your connection and tap Submit again — nothing was sent.'); return; }
     localStorage.setItem('lakky-last-proof', JSON.stringify({ ...p, amount: total, status: 'Payment Confirmation Pending' }));
     localStorage.removeItem('lakky-cart');
     setDone(true); setSending(false);
@@ -95,5 +96,6 @@ export default function PayPage({ params }: { params: { ref: string } }) {
     <div><label><input type="checkbox" checked={box1} onChange={(e) => setBox1(e.target.checked)} /> I confirm I have transferred ₦{total.toLocaleString()}.</label></div>
     <div><label><input type="checkbox" checked={box2} onChange={(e) => setBox2(e.target.checked)} /> I have read and agree to the rules.</label> <a href="/terms" target="_blank" rel="noreferrer">Read the rules</a></div>
     <div className="small">Short version: we keep your items free for {s.freeHoldDays} days. After that, ₦{Number(s.globalDailyFee).toLocaleString()} per day.</div>
-    <button className="btn" disabled={!canSubmit} onClick={submit}>{sending ? 'Sending…' : 'Submit'}</button></div>);
+    <button className="btn" disabled={!canSubmit} onClick={submit}>{sending ? 'Sending…' : 'Submit'}</button>
+    {sendErr && <div><b>{sendErr}</b></div>}</div>);
 }

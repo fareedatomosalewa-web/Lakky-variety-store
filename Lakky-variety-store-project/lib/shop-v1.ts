@@ -4,12 +4,50 @@
 // cancel, notifications, reviews, problems, wishlist, accounts, staff, exports.
 import postgres from 'postgres';
 import crypto from 'crypto';
-import { makeRef } from './pricing';
+import { makeRef, stepLabel } from './pricing';
 
 function conn() {
   const url = process.env.DATABASE_URL || '';
   if (!url) throw new Error('no-db');
   return postgres(url, { prepare: false });
+}
+
+// Same admin gate as shop-actions (duplicated to avoid a server-module cycle).
+// Staff-capable gate: admin always passes; approved staff pass their allowed actions.
+async function requireStaffAction(): Promise<boolean> {
+  try {
+    const { auth } = await import('./auth');
+    const { headers } = await import('next/headers');
+    const session = await auth.api.getSession({ headers: await headers() });
+    const role = ((session?.user as any)?.role as string) || '';
+    if (!session?.user || (role !== 'admin' && role !== 'staff')) return false;
+    if (role === 'staff') {
+      const postgres = (await import('postgres')).default;
+      const sql = postgres(process.env.DATABASE_URL || '', { prepare: false });
+      try {
+        const inv = await sql`select status from staff_invites where email=${(session.user as any).email} order by created_at desc limit 1`;
+        await sql.end();
+        if (!inv.length || inv[0].status !== 'approved') return false;
+      } catch {
+        try { await sql.end(); } catch {}
+        return false;
+      }
+    }
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+// HTTP callers need an admin session; local scripts have no request scope.
+async function requireAdminAction(): Promise<boolean> {
+  try {
+    const { getAdminSession } = await import('./auth');
+    const s = await getAdminSession();
+    return !!s.ok;
+  } catch {
+    return true;
+  }
 }
 function hashPw(pw: string, salt: string): string {
   return crypto.scryptSync(pw, salt, 64).toString('hex');
@@ -35,17 +73,32 @@ export async function ensureReference(args: { pendingRef: string }) {
   } catch { return { ok: false as const }; }
 }
 
+// ---- admin: recent confirmed orders tab ----
+export async function listConfirmed() {
+  try {
+    // ADMIN-GATED:listConfirmed
+    if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
+    const sql = conn();
+    const rows = await sql`select o.id, o.display_id as "displayId", o.total, o.fulfilment_status as st, o.confirmed_at as "at", c.full_name as name, c.phone, (select reference_id from pending_refs p where p.id=o.pending_id) as "referenceId" from orders o left join customers c on c.id=o.customer_id order by o.id desc limit 100`;
+    await sql.end();
+    return { ok: true as const, rows };
+  } catch { return { ok: false as const, rows: [] as any[] }; }
+}
+
 // ---- admin: pending queue + search (Order ID, Reference ID, name, phone) ----
 export async function listPending() {
   try {
+    // ADMIN-GATED:listPending
+    if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const rows = await sql`select p.id, p.ref, p.reference_id as "referenceId", p.expected_total as total, p.status, p.created_at as "at", c.full_name as name, c.phone, (select max(amount_claimed) from payment_submissions s where s.pending_id=p.id) as submitted from pending_refs p left join customers c on c.id=p.customer_id where p.status in ('pending','under') order by p.id desc limit 200`;
     await sql.end();
     return { ok: true as const, rows };
   } catch { return { ok: false as const, rows: [] as any[] }; }
 }
-export async function adminSearch(args: { q: string }) {
-  try {
+export async function adminSearch(args: { q: string }) {  try {
+    // ADMIN-GATED:adminSearch
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const q = '%' + String(args.q || '').trim() + '%';
     const rows = await sql`select o.id, o.display_id as "displayId", o.total, o.paid_amount as paid, o.payment_status as pay, o.fulfilment_status as st, c.full_name as name, c.phone, (select reference_id from pending_refs p where p.id=o.pending_id) as "referenceId" from orders o left join customers c on c.id=o.customer_id where o.display_id ilike ${q} or c.full_name ilike ${q} or c.phone ilike ${q} or exists (select 1 from pending_refs p where p.id=o.pending_id and p.reference_id ilike ${q}) order by o.id desc limit 100`;
@@ -57,9 +110,11 @@ export async function adminSearch(args: { q: string }) {
 // ---- admin: pending detail + reject / partial + fee marks + refunds ----
 export async function getPendingDetail(args: { ref: string }) {
   try {
+    // ADMIN-GATED:getPendingDetail
+    if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
-    const all = await sql`select p.*, c.full_name as name, c.phone from pending_refs p left join customers c on c.id=p.customer_id limit 5000`;
-    const pend = (all as any[]).find((r) => r.ref === args.ref || r.reference_id === args.ref);
+    const all = await sql`select p.*, c.full_name as name, c.phone from pending_refs p left join customers c on c.id=p.customer_id where p.ref=${args.ref} or p.reference_id=${args.ref} limit 2`;
+    const pend = (all as any[])[0];
     if (!pend) { await sql.end(); return { ok: false as const }; }
     const items = await sql`select * from pending_items where pending_id=${pend.id}`;
     const subs = await sql`select * from payment_submissions where pending_id=${pend.id} order by id`;
@@ -70,10 +125,12 @@ export async function getPendingDetail(args: { ref: string }) {
 const REJECT_OK = ['Underpayment', 'Fake receipt', 'Wrong order'];
 export async function rejectPending(args: { ref: string; reason: string; note?: string; admin?: string }) {
   try {
+    // ADMIN-GATED:rejectPending
+    if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const reason = REJECT_OK.includes(args.reason) ? args.reason : 'Other';
-    const all = await sql`select * from pending_refs where status in ('pending','under') limit 5000`;
-    const pend = (all as any[]).find((r) => r.ref === args.ref || r.reference_id === args.ref);
+    const all = await sql`select * from pending_refs where (status='pending' or status='under') and (ref=${args.ref} or reference_id=${args.ref}) limit 2`;
+    const pend = (all as any[])[0];
     if (!pend) { await sql.end(); return { ok: false as const }; }
     await sql`update pending_refs set status='rejected' where id=${pend.id}`;
     await sql`insert into order_messages (order_id, sender, text) values (${pend.id}, 'owner', ${'Order not accepted: ' + reason + (args.note ? ' — ' + args.note : '')})`;
@@ -85,9 +142,11 @@ export async function rejectPending(args: { ref: string; reason: string; note?: 
 }
 export async function markPartial(args: { ref: string; note: string; admin?: string }) {
   try {
+    // ADMIN-GATED:markPartial
+    if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
-    const all = await sql`select * from pending_refs where status in ('pending','under') limit 5000`;
-    const pend = (all as any[]).find((r) => r.ref === args.ref || r.reference_id === args.ref);
+    const all = await sql`select * from pending_refs where (status='pending' or status='under') and (ref=${args.ref} or reference_id=${args.ref}) limit 2`;
+    const pend = (all as any[])[0];
     if (!pend) { await sql.end(); return { ok: false as const }; }
     await sql`update pending_refs set status='partial' where id=${pend.id}`;
     await sql`insert into order_messages (order_id, sender, text) values (${pend.id}, 'owner', ${'Partially accepted: ' + (args.note || '') + ' — reply: store credit, refund for missing items, or cancel all.'})`;
@@ -98,6 +157,8 @@ export async function markPartial(args: { ref: string; note: string; admin?: str
 }
 export async function markFeePaid(args: { orderId: number; kind: string; admin?: string }) {
   try {
+    // ADMIN-GATED:markFeePaid
+    if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     await sql`insert into fee_payments (order_id, amount, status, verified_by) values (${args.orderId}, 0, 'verified', ${args.admin || 'owner'})`;
     await sql`insert into order_messages (order_id, sender, text) values (${args.orderId}, 'owner', ${args.kind === 'delivery' ? 'Delivery fee marked paid.' : 'Stockpile fee marked paid.'})`;
@@ -107,6 +168,8 @@ export async function markFeePaid(args: { orderId: number; kind: string; admin?:
 }
 export async function listFees(args: { orderId?: number }) {
   try {
+    // ADMIN-GATED:listFees
+    if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const rows = args.orderId
       ? await sql`select * from fee_payments where order_id=${args.orderId} order by id desc`
@@ -116,6 +179,8 @@ export async function listFees(args: { orderId?: number }) {
   } catch { return { ok: false as const, rows: [] as any[] }; }
 }
 export async function listRefunds(args: { orderId?: number }) {  try {
+    // ADMIN-GATED:listRefunds
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const rows = args.orderId
       ? await sql`select * from refund_requests where order_id=${args.orderId} order by id desc`
@@ -128,10 +193,12 @@ export async function listRefunds(args: { orderId?: number }) {  try {
 // ---- order thread: numeric order id + messages by pending ref or display id ----
 export async function getOrderThread(args: { ref: string }) {
   try {
+    // ADMIN-GATED:getOrderThread
+    if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const key = String(args.ref || '').trim().toUpperCase();
-    const all = await sql`select id, display_id as "displayId", pending_id as "pendingId", fulfilment_status as st from orders order by id desc limit 5000`;
-    const hit = (all as any[]).find((o) => String(o.displayId).toUpperCase() === key || String(o.displayId).toUpperCase().endsWith(key));
+    const all = await sql`select id, display_id as "displayId", pending_id as "pendingId", fulfilment_status as st from orders where upper(display_id) = ${key} or upper(display_id) like ${'%' + key} order by id desc limit 5`;
+    const hit = (all as any[])[0];
     let orderId: number | null = hit ? hit.id : null;
     if (!orderId) {
       const p = await sql`select id from pending_refs where ref=${args.ref} or reference_id=${args.ref} limit 1`;
@@ -150,6 +217,8 @@ export async function getOrderThread(args: { ref: string }) {
 // ---- stockpile aged past max days: contact + release back to sale ----
 export async function agedStockpile() {
   try {
+    // ADMIN-GATED:agedStockpile
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const s = await sql`select max_stockpile_days as maxd from settings limit 1`;
     const maxd = Number(s[0]?.maxd ?? 60);
@@ -163,6 +232,8 @@ export async function agedStockpile() {
 }
 export async function releaseStockpile(args: { orderId: number; actor?: string }) {
   try {
+    // ADMIN-GATED:releaseStockpile
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const items = await sql`select variant_sku_id as "sku", qty from order_items where order_id=${args.orderId}`;
     for (const it of items as any[]) {
@@ -191,13 +262,14 @@ export async function customerSession(args: { token: string }) {
 }
 
 // ---- one-tap progress with instant customer notice (labels live in ./pricing) ----
-import { stepLabel } from './pricing';
 const NEXT: Record<string, string[]> = {
   processing: ['packaged'], packaged: ['ready', 'onway'],
   ready: ['completed'], onway: ['completed'],
 };
 export async function advanceOrder(args: { orderId: number; to: string; actor?: string }) {
   try {
+    // ADMIN-GATED:advanceOrder
+    if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const cur = await sql`select fulfilment_status as st, customer_id as "cid", display_id as "displayId" from orders where id=${args.orderId} limit 1`;
     if (!cur.length) { await sql.end(); return { ok: false as const }; }
@@ -274,6 +346,8 @@ export async function requestMoney(args: { orderId?: number; phone: string; kind
 }
 export async function decideRefund(args: { id: number; approve: boolean; admin: string }) {
   try {
+    // ADMIN-GATED:decideRefund
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const rows = await sql`select * from refund_requests where id=${args.id}`;
     if (!rows.length || rows[0].status !== 'pending') { await sql.end(); return { ok: false as const }; }
@@ -311,6 +385,8 @@ export async function cancelOrder(args: { orderId: number; phone: string; reason
 const FLOW = ['pending', 'confirmed', 'packaged', 'onway', 'ready', 'completed'];
 export async function setProgress(args: { ids: number[]; to: string; actor: string }) {
   try {
+    // ADMIN-GATED:setProgress
+    if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     if (!FLOW.includes(args.to) || !args.ids.length) { await sql.end(); return { ok: false as const }; }
     for (const id of args.ids.slice(0, 100)) {
@@ -323,6 +399,8 @@ export async function setProgress(args: { ids: number[]; to: string; actor: stri
 }
 export async function remindersDue() {
   try {
+    // ADMIN-GATED:remindersDue
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const s = await sql`select free_hold_days as "free", reminder_first_days as first, reminder_every_days as every from settings limit 1`;
     const first = Number(s[0]?.first ?? 2), every = Number(s[0]?.every ?? 2);
@@ -425,6 +503,8 @@ export async function signInCustomer(args: { email: string; password: string }) 
 }
 export async function resetCustomerPassword(args: { customerId: number; newPassword: string }) {
   try {
+    // ADMIN-GATED:resetCustomerPassword
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     if (!args.newPassword || args.newPassword.length < 6) { await sql.end(); return { ok: false as const }; }
     const salt = crypto.randomBytes(16).toString('hex');
@@ -440,6 +520,8 @@ export async function resetCustomerPassword(args: { customerId: number; newPassw
 // ---- admin catalogue: edit product, coupons, media ----
 export async function getProductAdmin(args: { name: string }) {
   try {
+    // ADMIN-GATED:getProductAdmin
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const p = await sql`select * from products where name=${args.name} limit 1`;
     if (!p.length) { await sql.end(); return { ok: false as const }; }
@@ -452,6 +534,8 @@ export async function getProductAdmin(args: { name: string }) {
 }
 export async function saveProductAdmin(args: { name: string; patch: any; variants?: any[] }) {
   try {
+    // ADMIN-GATED:saveProductAdmin
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const p = await sql`select id from products where name=${args.name} limit 1`;
     if (!p.length) { await sql.end(); return { ok: false as const }; }
@@ -471,6 +555,8 @@ export async function saveProductAdmin(args: { name: string; patch: any; variant
 }
 export async function listCoupons() {
   try {
+    // ADMIN-GATED:listCoupons
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const rows = await sql`select * from coupons order by code`;
     await sql.end();
@@ -479,6 +565,8 @@ export async function listCoupons() {
 }
 export async function createCoupon(args: { code: string; percent: number; expiry?: string; limit: number }) {
   try {
+    // ADMIN-GATED:createCoupon
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const code = String(args.code || '').trim().toUpperCase();
     if (!code || !args.percent || !args.limit) { await sql.end(); return { ok: false as const }; }
@@ -529,6 +617,8 @@ export async function listAddons(args: { productName: string }) {
 // ---- product media upload (owner phone; photos + ≤20MB video, view-only links) ----
 export async function addMedia(args: { productName: string; fileBase64: string; contentType: string; ext: string; kind: string }) {
   try {
+    // ADMIN-GATED:addMedia
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     if (Buffer.from(args.fileBase64, 'base64').length > 20 * 1024 * 1024) return { ok: false as const };
     const sql = conn();
     const p = await sql`select id from products where name=${args.productName} limit 1`;
@@ -545,12 +635,16 @@ export async function addMedia(args: { productName: string; fileBase64: string; 
 }
 export async function mediaViewUrl(args: { key: string }) {
   try {
+    // ADMIN-GATED:mediaViewUrl
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const { receiptViewUrl } = await import('./storage');
     return await receiptViewUrl(args.key, 'product-images');
   } catch { return { ok: false as const }; }
 }
 export async function addAddon(args: { productName: string; name: string; price: number; stock: number }) {
   try {
+    // ADMIN-GATED:addAddon
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const p = await sql`select id from products where name=${args.productName} limit 1`;
     if (!p.length || !args.name) { await sql.end(); return { ok: false as const }; }
@@ -563,6 +657,8 @@ export async function addAddon(args: { productName: string; name: string; price:
 // ---- staff invites + approval + customer password reset (owner) ----
 export async function inviteStaff(args: { email: string }) {
   try {
+    // ADMIN-GATED:inviteStaff
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const email = String(args.email || '').trim().toLowerCase();
     if (!email.includes('@')) { await sql.end(); return { ok: false as const }; }
@@ -574,6 +670,8 @@ export async function inviteStaff(args: { email: string }) {
 }
 export async function listInvites() {
   try {
+    // ADMIN-GATED:listInvites
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const rows = await sql`select * from staff_invites order by created_at desc limit 100`;
     await sql.end();
@@ -595,6 +693,8 @@ export async function joinStaff(args: { inviteId: string; password: string }) {
 }
 export async function approveStaff(args: { email: string; approve: boolean }) {
   try {
+    // ADMIN-GATED:approveStaff
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     await sql`update staff_invites set status=${args.approve ? 'approved' : 'declined'} where email=${args.email}`;
     await sql.end();
@@ -603,6 +703,8 @@ export async function approveStaff(args: { email: string; approve: boolean }) {
 }
 export async function listCustomers() {
   try {
+    // ADMIN-GATED:listCustomers
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const rows = await sql`select id, full_name as name, phone, email, credit_balance as credit from customers order by id desc limit 500`;
     await sql.end();
@@ -611,6 +713,8 @@ export async function listCustomers() {
 }
 export async function listEvents() {
   try {
+    // ADMIN-GATED:listEvents
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const rows = await sql`select order_id as "orderId", actor, action, note, created_at as "at" from order_events order by id desc limit 100`;
     await sql.end();
@@ -629,6 +733,8 @@ export async function logShopEvent(args: { customerId?: number; kind: string; de
 // ---- dashboard numbers + exports ----
 export async function dashboard() {
   try {
+    // ADMIN-GATED:dashboard
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const today = new Date().toISOString().slice(0, 10);
     const sales = await sql`select coalesce(sum(paid_amount),0)::int as s from orders where payment_status in ('confirmed','overpayment') and confirmed_at::date=${today}`;
@@ -642,6 +748,8 @@ export async function dashboard() {
 }
 export async function exportCsv(args: { what: string }) {
   try {
+    // ADMIN-GATED:exportCsv
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     let rows: any[] = [];
     if (args.what === 'orders') rows = await sql`select o.display_id, o.total, o.paid_amount, o.payment_status, o.fulfilment_status, o.confirmed_at from orders o order by o.id limit 2000`;

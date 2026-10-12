@@ -3,11 +3,50 @@
 import { db } from './db';
 import { normalizePhone, last4 } from './phone';
 import { customers, pendingRefs, pendingItems, paymentSubmissions, orders, orderItems, variantSkus, addons, settings } from '../db/schema';
-import { eq, sql as dsql } from 'drizzle-orm';
+import { eq, or, sql as dsql } from 'drizzle-orm';
 
 // v1.7 Supabase slice: shop data lives in Supabase. Every action returns
 // { ok } or { ok:false } so pages can fall back to the local demo flow.
 // Secrets stay server-side — never returned to the browser.
+
+// Admin gate: HTTP callers must hold an admin session. Local scripts have no
+// request scope (headers() throws) — they already hold the database itself,
+// so only HTTP callers without a session are refused.
+async function requireAdminAction(): Promise<boolean> {
+  try {
+    const { getAdminSession } = await import('./auth');
+    const s = await getAdminSession();
+    return !!s.ok;
+  } catch {
+    return true;
+  }
+}
+
+// Staff-capable gate: admin always passes; approved staff pass their allowed actions.
+async function requireStaffAction(): Promise<boolean> {
+  try {
+    const { auth } = await import('./auth');
+    const { headers } = await import('next/headers');
+    const session = await auth.api.getSession({ headers: await headers() });
+    const role = ((session?.user as any)?.role as string) || '';
+    if (!session?.user || (role !== 'admin' && role !== 'staff')) return false;
+    if (role === 'staff') {
+      const postgres = (await import('postgres')).default;
+      const sql = postgres(process.env.DATABASE_URL || '', { prepare: false });
+      try {
+        const inv = await sql`select status from staff_invites where email=${(session.user as any).email} order by created_at desc limit 1`;
+        await sql.end();
+        if (!inv.length || inv[0].status !== 'approved') return false;
+      } catch {
+        try { await sql.end(); } catch {}
+        return false;
+      }
+    }
+    return true;
+  } catch {
+    return true;
+  }
+}
 
 // ---- 1. Settings (bank, days, note, fees) ----
 export async function getSettings() {
@@ -36,6 +75,7 @@ export async function getSettings() {
 
 export async function saveSettings(patch: Record<string, unknown>) {
   try {
+    if (!(await requireAdminAction())) return { ok: false as const, reason: 'admin-only' };
     const allowed = ['bankDetails', 'globalDailyFee', 'freeHoldDays', 'overpaymentThreshold', 'underpaymentExpiryDays', 'abandonDays', 'fulfilmentDays', 'pickupNote', 'stockpileFeePerDay', 'maxStockpileDays', 'creditCashMinimum', 'restockTagDays', 'newTagDays', 'reportWindowHours', 'reminderFirstDays', 'reminderEveryDays', 'pickupLocation', 'pickupReveal', 'shopHours', 'announcementOn', 'announcementText', 'socialLinks', 'aboutText', 'helpText'] as const;
     const clean: Record<string, unknown> = {};
     for (const k of allowed) if (patch[k] !== undefined) clean[k] = patch[k];
@@ -89,29 +129,80 @@ export async function createPending(args: {
         if (!rows.length) referenceId = code;
       } catch { /* retry */ }
     }
+    // Server-side totals: browser prices are display-only. Re-price every line
+    // from the database, apply a valid coupon first, then all store credit.
+    let gross = 0;
+    for (const l of args.lines) {
+      const skuId = await resolveVariantSkuId(l.attrs, l.price);
+      let unit = l.price;
+      if (skuId) {
+        const r: any = await db.execute(dsql`select price from variant_skus where id = ${skuId} limit 1`);
+        const rows = r.rows || r;
+        if (rows.length) unit = Number(rows[0].price);
+      }
+      gross += unit * l.qty;
+      if (l.addon) {
+        let ap = l.addon.price;
+        try {
+          const pa: any = await db.execute(dsql`select price from product_addons where name = ${l.addon!.name} limit 1`);
+          const pr = pa.rows || pa;
+          if (pr.length) ap = Number(pr[0].price);
+          else {
+            const ad = await db.select().from(addons);
+            const hit = (ad as any[]).find((a) => a.name === l.addon!.name);
+            if (hit) ap = hit.price;
+          }
+        } catch { /* browser price stands */ }
+        gross += ap * l.qty;
+      }
+    }
+    let couponCode: string | null = null;
+    if (args.couponCode) {
+      try {
+        const cp: any = await db.execute(dsql`select percent, expiry, usage_limit, used from coupons where code = ${String(args.couponCode).trim().toUpperCase()} limit 1`);
+        const rows = cp.rows || cp;
+        if (rows.length) {
+          const c = rows[0];
+          if ((!c.expiry || new Date(c.expiry) > new Date()) && Number(c.used) < Number(c.usage_limit)) {
+            gross = Math.max(0, gross - Math.round((gross * Number(c.percent)) / 100));
+            couponCode = String(args.couponCode).trim().toUpperCase();
+          }
+        }
+      } catch { /* no coupon */ }
+    }
+    const bal: any = await db.execute(dsql`select coalesce(credit_balance,0) as b from customers where id = ${customerId} limit 1`);
+    const balRows = bal.rows || bal;
+    const serverUsed = Math.min(balRows.length ? Number(balRows[0].b) : 0, gross);
+    const serverTotal = Math.max(0, gross - serverUsed);
     const prow = await db.insert(pendingRefs).values({
       ref, referenceId, customerId,
       fulfilment: { method: args.method, area: args.area, day: args.day },
-      expectedTotal: args.total, creditApplied: args.creditApplied || 0, couponCode: args.couponCode || null,
+      expectedTotal: serverTotal, creditApplied: serverUsed, couponCode: couponCode || null,
       status: 'pending', agreedAt: args.agreedAt ? new Date(args.agreedAt) : null,
     } as any).returning({ id: pendingRefs.id });
     const pendingId = (prow as any[])[0].id;
     for (const l of args.lines) {
       const skuId = await resolveVariantSkuId(l.attrs, l.price);
-      await db.insert(pendingItems).values({ pendingId, variantSkuId: skuId, qty: l.qty, unitPriceSnapshot: l.price } as any);
+      const skuRows: any = skuId ? await db.execute(dsql`select price from variant_skus where id = ${skuId} limit 1`) : null;
+      const skuList = skuRows ? (skuRows.rows || skuRows) : [];
+      const unit = skuList.length ? Number(skuList[0].price) : l.price;
+      await db.insert(pendingItems).values({ pendingId, variantSkuId: skuId, qty: l.qty, unitPriceSnapshot: unit } as any);
       if (l.addon) {
         const ad = await db.select().from(addons);
         const hit = (ad as any[]).find((a) => a.name === l.addon!.name) || null;
-        await db.insert(pendingItems).values({ pendingId, addonId: hit ? hit.id : null, qty: l.qty, unitPriceSnapshot: l.addon.price } as any);
+        const pa: any = await db.execute(dsql`select id, price from product_addons where name = ${l.addon!.name} limit 1`).catch(() => null);
+        const paRows = pa ? (pa.rows || pa) : [];
+        const addonPrice = paRows.length ? Number(paRows[0].price) : (hit ? hit.price : l.addon.price);
+        await db.insert(pendingItems).values({ pendingId, addonId: hit ? hit.id : null, qty: l.qty, unitPriceSnapshot: addonPrice } as any);
       }
     }
-    return { ok: true as const, ref, pendingId };
+    return { ok: true as const, ref, pendingId, total: serverTotal, creditUsed: serverUsed };
   } catch { return { ok: false as const }; }
 }
 
 export async function recordPayment(args: { ref: string; amount: number; date: string; time?: string; reference?: string }) {  try {
-    const p = await db.select().from(pendingRefs).limit(1000);
-    const hit = (p as any[]).find((r) => r.ref === args.ref || r.referenceId === args.ref || r.reference_id === args.ref);
+    const p = await db.select().from(pendingRefs).where(or(eq(pendingRefs.ref, args.ref), eq(pendingRefs.referenceId, args.ref))).limit(2);
+    const hit = (p as any[])[0];
     if (!hit) return { ok: false as const };
     await db.insert(paymentSubmissions).values({
       pendingId: hit.id, amountClaimed: args.amount,
@@ -134,20 +225,21 @@ function addDays(dateStr: string, days: number): string {
 // ---- 3. Admin Confirm in ONE transaction: order + items + stock move ----
 export async function confirmOrder(args: { pendingRef: string; verifiedAmount: number; seenBank: boolean }) {
   try {
+    if (!(await requireStaffAction())) return { ok: false as const, reason: 'admin-only' };
     if (!args.seenBank) return { ok: false as const, reason: 'seen-bank-required' };
-    const all = await db.select().from(pendingRefs).limit(5000);
-    const pend = (all as any[]).find((r) => r.ref === args.pendingRef || r.referenceId === args.pendingRef || r.reference_id === args.pendingRef);
+    const all = await db.select().from(pendingRefs).where(or(eq(pendingRefs.ref, args.pendingRef), eq(pendingRefs.referenceId, args.pendingRef))).limit(2);
+    const pend = (all as any[])[0];
     if (!pend || pend.status !== 'pending') return { ok: false as const, reason: 'not-pending' };
-    const items = ((await db.select().from(pendingItems).limit(500)) as any[]).filter((i) => i.pendingId === pend.id);
-    const subs = ((await db.select().from(paymentSubmissions).limit(500)) as any[]).filter((s) => s.pendingId === pend.id);
+    const items = (await db.select().from(pendingItems).where(eq(pendingItems.pendingId, pend.id))) as any[];
+    const subs = (await db.select().from(paymentSubmissions).where(eq(paymentSubmissions.pendingId, pend.id))) as any[];
     const paid = subs.length ? subs[subs.length - 1].amountClaimed : args.verifiedAmount;
     const expected = pend.expectedTotal;
     if (args.verifiedAmount < expected) {
       await db.update(pendingRefs).set({ status: 'under' } as any).where(eq(pendingRefs.id, pend.id));
       return { ok: false as const, reason: 'underpayment', outstanding: expected - args.verifiedAmount };
     }
-    const cust = ((await db.select().from(customers).limit(5000)) as any[]).find((c) => c.id === pend.customerId);
-    const phone = cust ? cust.phone : '';
+    const cust = (await db.select().from(customers).where(eq(customers.id, pend.customerId)).limit(2)) as any[];
+    const phone = cust.length ? cust[0].phone : '';
     const l4 = last4(phone);
     const sets = await db.select().from(settings).limit(1);
     const freeDays = (sets[0] as any)?.freeHoldDays ?? 14;
@@ -194,39 +286,48 @@ export async function confirmOrder(args: { pendingRef: string; verifiedAmount: n
   }
 }
 
-// ---- 4. Track page (Order ID + FULL phone) reads from Supabase ----
+// ---- 4. Track: Order ID + FULL phone, or pending Reference ID + FULL phone ----
 export async function trackOrder(args: { displayId: string; phone: string }) {
   try {
     const id = String(args.displayId || '').trim().toUpperCase();
     const phone = normalizePhone(args.phone);
     if (!id || !phone) return { ok: false as const };
-    const all = (await db.select().from(orders).limit(5000)) as any[];
-    const order = all.find((o) => String(o.displayId).toUpperCase() === id);
-    if (!order) return { ok: false as const };
-    const cust = ((await db.select().from(customers).limit(5000)) as any[]).find((c) => c.id === order.customerId);
-    if (!cust || normalizePhone(cust.phone) !== phone) return { ok: false as const };    const sets = await db.select().from(settings).limit(1);
-    const rate = (sets[0] as any)?.globalDailyFee ?? 500;
-    const today = lagosToday();
-    const freeUntil = String(order.freeUntil || '').slice(0, 10);
-    const extraDays = freeUntil && today > freeUntil
-      ? Math.ceil((new Date(today + 'T12:00:00Z').getTime() - new Date(freeUntil + 'T12:00:00Z').getTime()) / 86400000)
-      : 0;
-    return {
-      ok: true as const,
-      order: {
-        id: order.id, displayId: order.displayId, status: order.paymentStatus, fulfilment: order.fulfilmentStatus,
-        total: order.total, paid: order.paidAmount,
-        confirmedAt: order.confirmedAt, freeUntil, extraDays, fee: extraDays * rate, rate,
-      },
-    };
+    const found = await db.select().from(orders).where(or(eq(orders.displayId, id), eq(orders.displayId, String(args.displayId || '').trim()))).limit(2);
+    const order = (found as any[])[0];
+    if (order) {
+      const cust = ((await db.select().from(customers).where(eq(customers.id, order.customerId)).limit(2)) as any[]);
+      if (!cust.length || normalizePhone(cust[0].phone) !== phone) return { ok: false as const };    const sets = await db.select().from(settings).limit(1);
+      const rate = (sets[0] as any)?.globalDailyFee ?? 500;
+      const today = lagosToday();
+      const freeUntil = String(order.freeUntil || '').slice(0, 10);
+      const extraDays = freeUntil && today > freeUntil
+        ? Math.ceil((new Date(today + 'T12:00:00Z').getTime() - new Date(freeUntil + 'T12:00:00Z').getTime()) / 86400000)
+        : 0;
+      return {
+        ok: true as const,
+        order: {
+          id: order.id, displayId: order.displayId, status: order.paymentStatus, fulfilment: order.fulfilmentStatus,
+          total: order.total, paid: order.paidAmount,
+          confirmedAt: order.confirmedAt, freeUntil, extraDays, fee: extraDays * rate, rate,
+        },
+      };
+    }
+    // Pending stage: reference code + phone sees where the payment stands
+    const pend = (await db.select().from(pendingRefs).where(or(eq(pendingRefs.ref, String(args.displayId || '').trim()), eq(pendingRefs.referenceId, String(args.displayId || '').trim()))).limit(2)) as any[];
+    const p = pend[0];
+    if (!p) return { ok: false as const };
+    const cust = ((await db.select().from(customers).where(eq(customers.id, p.customerId)).limit(2)) as any[]);
+    if (!cust.length || normalizePhone(cust[0].phone) !== phone) return { ok: false as const };
+    const stage = p.status === 'confirmed' ? 'confirmed' : p.status === 'under' ? 'underpayment' : p.status === 'rejected' ? 'rejected' : 'checking';
+    return { ok: true as const, pending: true as const, stage, ref: p.referenceId || p.ref, total: p.expectedTotal, status: p.status };
   } catch { return { ok: false as const }; }
 }
 
 // ---- Receipt upload: bytes go to private Supabase Storage, key saved on the submission ----
 export async function submitReceipt(args: { ref: string; amount: number; fileBase64: string | null; contentType: string; ext: string; bankRef?: string }) {
   try {
-    const all = (await db.select().from(pendingRefs).limit(5000)) as any[];
-    const pend = all.find((r) => r.ref === args.ref || r.referenceId === args.ref || r.reference_id === args.ref);
+    const all = (await db.select().from(pendingRefs).where(or(eq(pendingRefs.ref, args.ref), eq(pendingRefs.referenceId, args.ref))).limit(2)) as any[];
+    const pend = all[0];
     if (!pend) return { ok: false as const, reason: 'not-found' };
     let key: string | null = null;
     if (args.fileBase64) {
@@ -249,6 +350,7 @@ export async function submitReceipt(args: { ref: string; amount: number; fileBas
 // ---- Admin: short-lived signed link to view a receipt (never public) ----
 export async function getReceiptUrl(args: { key: string }) {
   try {
+    if (!(await requireStaffAction())) return { ok: false as const };
     if (!args.key) return { ok: false as const };
     const { receiptViewUrl } = await import('./storage');
     return await receiptViewUrl(args.key);
@@ -258,10 +360,11 @@ export async function getReceiptUrl(args: { key: string }) {
 // ---- Admin: latest receipt for a pending ref (image + verified box stay together) ----
 export async function getSubmissionProof(args: { ref: string }) {
   try {
-    const all = (await db.select().from(pendingRefs).limit(5000)) as any[];
-    const pend = all.find((r) => r.ref === args.ref || r.referenceId === args.ref || r.reference_id === args.ref);
+    if (!(await requireStaffAction())) return { ok: false as const };
+    const all = (await db.select().from(pendingRefs).where(or(eq(pendingRefs.ref, args.ref), eq(pendingRefs.referenceId, args.ref))).limit(2)) as any[];
+    const pend = all[0];
     if (!pend) return { ok: false as const };
-    const subs = ((await db.select().from(paymentSubmissions).limit(500)) as any[]).filter((s) => s.pendingId === pend.id);
+    const subs = ((await db.select().from(paymentSubmissions).where(eq(paymentSubmissions.pendingId, pend.id))) as any[]);
     if (!subs.length) return { ok: false as const };
     const last = subs[subs.length - 1];
     if (!last.proofUrl) return { ok: true as const, amount: last.amountClaimed, url: null };

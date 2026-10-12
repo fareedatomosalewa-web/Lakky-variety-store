@@ -7,7 +7,7 @@ import type { authTables, db as dbType } from './db';
 export function authOptions(database: typeof dbType, tables: typeof authTables): BetterAuthOptions {
   return {
     database: drizzleAdapter(database, { provider: 'pg', schema: tables }),
-    emailAndPassword: { enabled: true },
+    emailAndPassword: { enabled: true, disableSignUp: true },
     user: {
       additionalFields: {
         role: { type: 'string', defaultValue: 'customer', input: false },

@@ -43,19 +43,20 @@ export default function CheckoutPage() {
     try {
       const r: any = await createPending({ name, phone, method, area, day, agreedAt: '', lines, total, creditApplied: quote ? quote.used : 0, couponCode: coupon || undefined, token });
       if (r.ok) {
+        const payTotal = typeof r.total === 'number' ? r.total : total;
         let code = r.ref;
         try {
           const rr: any = await ensureReference({ pendingRef: r.ref });
           if (rr.ok) code = rr.referenceId;
         } catch { /* internal ref stays */ }
-        localStorage.setItem('lakky-pending', JSON.stringify({ ref: code, pendingId: r.pendingId, name, phone, method, area, day, total, creditUsed: quote ? quote.used : 0, coupon, live: true }));
+        localStorage.setItem('lakky-pending', JSON.stringify({ ref: code, pendingId: r.pendingId, name, phone, method, area, day, total: payTotal, creditUsed: quote ? quote.used : 0, coupon, live: true }));
         location.href = '/pay/' + code;
         return;
       }
-    } catch { /* fall through to local demo ref */ }
-    const ref = 'P-2026-' + Math.floor(1000 + Math.random() * 9000);
-    localStorage.setItem('lakky-pending', JSON.stringify({ ref, name, phone, method, area, day, total, creditUsed: quote ? quote.used : 0, coupon }));
-    location.href = '/pay/' + ref;
+      if (r.reason === 'login-required') { alert('Please log in or create an account first.'); location.href = '/login'; return; }
+      alert('Could not reach the shop database. Your order was NOT created. Check your connection and try again.');
+      return;
+    } catch { alert('Could not reach the shop database. Your order was NOT created. Check your connection and try again.'); return; }
   };
   return (<div className="card"><h2>Checkout</h2>
     <div className="small">Items ₦{total.toLocaleString()}{quote && quote.used > 0 && <> • store credit applied ₦{quote.used.toLocaleString()}</>}{quote && quote.couponOff > 0 && <> • coupon −₦{quote.couponOff.toLocaleString()}</>}</div>
