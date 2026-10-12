@@ -11,17 +11,24 @@ export default function CheckoutPage() {
   const [name, setName] = useState(''); const [phone, setPhone] = useState('');
   const [method, setMethod] = useState('Pickup'); const [area, setArea] = useState('');
   const [day, setDay] = useState('');
-  const [days, setDays] = useState<string[]>([]);
   const [coupon, setCoupon] = useState('');
   const [quote, setQuote] = useState<any>(null);
+  const next7: { value: string; label: string }[] = (() => {
+    const out: { value: string; label: string }[] = [];
+    const now = Date.now();
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(now + i * 86400000);
+      const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Lagos', weekday: 'short', day: 'numeric', month: 'short' }).formatToParts(d);
+      const get = (t: string) => (parts.find((p) => p.type === t) || {}).value || '';
+      const iso = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Lagos', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+      out.push({ value: iso, label: i === 0 ? `Today — ${get('weekday')} ${get('day')} ${get('month')}` : `${get('weekday')} ${get('day')} ${get('month')}` });
+    }
+    return out;
+  })();
   useEffect(() => {
     setCart(JSON.parse(localStorage.getItem('lakky-cart') || '[]'));
     const c = custKey();
     if (c) { setName(c.name || ''); setPhone(c.phone || ''); }
-    try {
-      const raw = JSON.parse(localStorage.getItem('lakky-settings') || 'null');
-      if (raw && raw.fulfilmentDays) setDays(raw.fulfilmentDays);
-    } catch { /* seed defaults */ }
   }, []);
   const total = cart.reduce((s, l) => s + (l.price + (l.addon ? l.addon.price : 0)) * l.qty, 0);
   useEffect(() => {
@@ -34,7 +41,7 @@ export default function CheckoutPage() {
     let token = '';
     try { token = JSON.parse(localStorage.getItem('lakky-customer') || '{}').token || ''; } catch { token = ''; }
     if (!token) { alert('Please log in or create an account first.'); location.href = '/login'; return; }
-    if (method === 'Pickup' && day && !['Today', 'Tomorrow', 'Day after tomorrow', ''].includes(day)) {
+    if (method === 'Pickup' && day && !next7.some((d) => d.value === day)) {
       alert('Pickup must be within 1 week. For a later date, please choose Stockpile below.');
       return;
     }
@@ -73,7 +80,7 @@ export default function CheckoutPage() {
       {method==='Delivery' && <><input placeholder="Area, address and a landmark near you" value={area} onChange={e=>setArea(e.target.value)} /><div className="small">Delivery fee is calculated separately and differs by location. You will be contacted for the delivery fee.</div></>}
       {method==='Stockpile' && <div className="small">You pay now and collect later. Free days and daily fees are in <a href="/terms" target="_blank" rel="noreferrer">our rules</a>.</div>}
       <div className="small">Preferred day</div>
-      <select value={day} onChange={e=>setDay(e.target.value)}><option value="">Pick a day{method==='Pickup' ? ' (within 1 week)' : ''}</option><option>Today</option><option>Tomorrow</option><option>Day after tomorrow</option>{days.map((d) => <option key={d} value={d}>{d}</option>)}</select>
+      <select value={day} onChange={e=>setDay(e.target.value)}><option value="">Pick a day (within 1 week)</option>{next7.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}</select>
     </div>
     <div className="card"><div className="small" style={{ fontWeight: 700 }}>ORDER SUMMARY</div>
       {cart.map((l: any, i: number) => <div key={i} style={{ display: 'flex', justifyContent: 'space-between' }}><span>{l.name} × {l.qty}</span><b>₦{((l.price + (l.addon ? l.addon.price : 0)) * l.qty).toLocaleString()}</b></div>)}
