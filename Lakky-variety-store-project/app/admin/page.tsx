@@ -3,7 +3,20 @@ import { useEffect, useState } from 'react';
 import { useAdminGuard } from '../../lib/use-admin-guard';
 import { listPending, listConfirmed, adminSearch, setProgress, dashboard, exportCsv, remindersDue, listFees, agedStockpile, releaseStockpile, rejectPending } from '../../lib/shop-v1';
 import { confirmOrder } from '../../lib/shop-actions';
-const NEXTS: Record<string, string> = { pending: 'confirmed', confirmed: 'packaged', packaged: 'onway', onway: 'ready', ready: 'completed' };
+import AdminShell from './shell';
+const ago = (d: any) => {
+  const m = Math.floor((Date.now() - new Date(d).getTime()) / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} hr ago`;
+  return `${Math.floor(h / 24)} days ago`;
+};
+const mask = (p: string) => {
+  const d = String(p || '').replace(/\D/g, '');
+  if (d.length < 7) return p;
+  return `${d.slice(0, 4)} •••• ${d.slice(-4)}`;
+};
 export default function AdminDash() {
   const allowed = useAdminGuard(['admin', 'staff']);
   const [items, setItems] = useState<any[]>([]);
@@ -13,11 +26,11 @@ export default function AdminDash() {
   const [remind, setRemind] = useState<any[]>([]);
   const [fees, setFees] = useState<any[]>([]);
   const [aged, setAged] = useState<any[]>([]);
+  const [confirmed, setConfirmed] = useState<any[]>([]);
+  const [tab, setTab] = useState('review');
   const [pop, setPop] = useState<any>(null);
   const [popMsg, setPopMsg] = useState('');
   const [popReason, setPopReason] = useState('Underpayment');
-  const [tab, setTab] = useState('pending');
-  const [confirmed, setConfirmed] = useState<any[]>([]);
   const load = async () => {
     const r: any = await listPending().catch(() => null);
     if (r && r.ok) setItems(r.rows);
@@ -37,8 +50,7 @@ export default function AdminDash() {
   const toggle = (id: number) => setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   const bulk = async (to: string) => {
     if (!sel.length) return;
-    const ids = sel.filter((id) => items.find((i) => i.id === id));
-    await setProgress({ ids, to, actor: 'owner' }).catch(() => null);
+    await setProgress({ ids: sel, to, actor: 'owner' }).catch(() => null);
     setSel([]); load();
   };
   const search = async () => {
@@ -52,34 +64,57 @@ export default function AdminDash() {
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = what + '.csv'; a.click();
     }
   };
-  return (<div><h2>Admin queue — all pending first</h2>
-    {stats && <div className="card small">Today sales ₦{Number(stats.salesToday).toLocaleString()} • open orders {stats.openOrders} • stockpiled {stats.stockpiled} • store credit owed ₦{Number(stats.creditOwed).toLocaleString()}</div>}
-    <div><a href="/admin/products">Products</a> | <a href="/admin/settings">Settings / Business Rules</a> | <a href="/admin/reports">Reports + CSV</a> | <a href="/admin/customers">Customers + activity</a> | <a href="/admin/staff">Staff</a></div>
-    <div className="card"><b>Search</b> by Order ID, Reference ID, name or phone<div style={{ display: 'flex', gap: 8 }}><input placeholder="LVS-… / REF-… / name / phone" value={q} onChange={(e) => setQ(e.target.value)} /><button className="btn-s" onClick={search}>Search</button></div>
-      {found.map((o) => <div key={o.id} className="small"><a href={`/admin/orders/${o.referenceId || o.displayId}`}>{o.displayId}</a> • {o.name} • {o.phone} • {o.pay} • {o.st}</div>)}</div>
-    <div className="card"><b>Bulk progress ({sel.length} picked)</b><div>{['packaged', 'onway', 'ready', 'completed'].map((t) => <button key={t} className="btn-s" style={{ marginRight: 6 }} onClick={() => bulk(t)}>→ {t}</button>)}</div></div>
-    {items.length === 0 && tab === 'pending' && <div className="card">No pending proofs yet. Submit one via storefront Pay page.</div>}
-    <div style={{ display: 'flex', gap: 8, margin: '8px 0' }}>
-      {(['pending', 'under', 'confirmed'] as string[]).map((t) => <button key={t} className="btn-s" style={tab === t ? { background: '#5A2948', color: '#fff' } : undefined} onClick={() => setTab(t)}>{t === 'pending' ? 'Pending' : t === 'under' ? 'Under' : 'Confirmed'}</button>)}
+  const review = items.filter((o) => o.status === 'pending');
+  const under = items.filter((o) => o.status !== 'pending');
+  const week = confirmed.filter((o) => Date.now() - new Date(o.at || Date.now()).getTime() < 7 * 86400000);
+  const received = week.reduce((s, o) => s + Number(o.total || 0), 0);
+  const rows = tab === 'review' ? review : tab === 'under' ? under : tab === 'confirmed' ? confirmed : tab === 'ready' ? confirmed.filter((o) => o.st === 'ready' || o.st === 'onway') : confirmed.filter((o) => o.st === 'rejected' || o.st === 'cancelled');
+  const quick = async () => {
+    if (!pop) return;
+    if (pop.mode === 'confirm') {
+      const it = items.find((x) => (x.referenceId || x.ref) === pop.ref);
+      if (!it || Number(it.submitted || 0) < Number(it.total || 0)) { setPopMsg('Underpaid — open the order instead.'); return; }
+      const r: any = await confirmOrder({ pendingRef: pop.ref, verifiedAmount: Number(it.submitted), seenBank: true }).catch(() => null);
+      if (r && r.ok) { setPop(null); load(); } else setPopMsg('Not saved — ' + ((r && r.reason) || 'try again') + '. Nothing changed.');
+    } else {
+      const r: any = await rejectPending({ ref: pop.ref, reason: popReason, admin: 'owner' }).catch(() => null);
+      if (r && r.ok) { setPop(null); load(); } else setPopMsg('Could not reject. Try again.');
+    }
+  };
+  return (<AdminShell><h2>Orders</h2>
+    <div className="searchbar"><span aria-hidden="true">🔍</span><input placeholder="Ref, name, phone or last 4…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') search(); }} /><button className="btn-s" onClick={search}>Go</button></div>
+    {found.length > 0 && <div className="card">{found.map((o) => <div key={o.id} className="small"><a href={`/admin/orders/${o.referenceId || o.displayId}`}>{o.displayId}</a> • {o.name} • {o.phone} • {o.pay} • {o.st}</div>)}</div>}
+    <div className="sumgrid">
+      <div className="sumcard"><div className="t">TO REVIEW</div><div className="n" style={{ color: '#B7791F' }}>{review.length}</div></div>
+      <div className="sumcard"><div className="t">UNDERPAID</div><div className="n" style={{ color: 'var(--red)' }}>{under.length}</div></div>
+      <div className="sumcard"><div className="t">CONFIRMED THIS WEEK</div><div className="n" style={{ color: 'var(--green)' }}>{week.length}</div></div>
+      <div className="sumcard"><div className="t">RECEIVED THIS WEEK</div><div className="n">₦{received.toLocaleString()}</div></div>
     </div>
-    {(tab === 'pending' ? items.filter((o) => o.status === 'pending') : tab === 'under' ? items.filter((o) => o.status !== 'pending') : confirmed).map((o) => <div className="card" key={o.id || o.displayId}><input type="checkbox" checked={sel.includes(o.id)} onChange={() => toggle(o.id)} /> <b>{o.referenceId || o.ref || o.displayId}</b> • {o.name} • {o.phone} • Expected ₦{Number(o.total).toLocaleString()} • Got ₦{Number(o.submitted || o.paid || 0).toLocaleString()} <span className="badge">{o.status || o.st}</span><br /><button className="btn-s" onClick={() => { setPop({ mode: 'confirm', ref: o.referenceId || o.ref || o.displayId }); setPopMsg(''); }}>Confirm</button> <button className="btn-d" onClick={() => { setPop({ mode: 'reject', ref: o.referenceId || o.ref || o.displayId }); setPopMsg(''); }}>Reject</button> <a className="btn" href={`/admin/orders/${o.referenceId || o.ref || o.displayId}`}>Open →</a></div>)}
+    <div className="catchips" style={{ marginTop: 10 }}>
+      {[['review', `To review (${review.length})`], ['under', `Underpaid (${under.length})`], ['confirmed', 'Confirmed'], ['ready', 'Ready'], ['rejected', 'Rejected']].map(([t, label]) => <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{label}</button>)}
+    </div>
+    <div className="tablewrap"><table>
+      <thead><tr><th></th><th>REF</th><th>CUSTOMER</th><th>SUBMITTED</th><th>EXPECTED</th><th>CLAIMED</th><th>RECEIPT</th><th>STATUS</th><th></th></tr></thead>
+      <tbody>{rows.map((o) => <tr key={o.id || o.displayId}>
+        <td><input type="checkbox" checked={sel.includes(o.id)} onChange={() => toggle(o.id)} /></td>
+        <td><b>{o.referenceId || o.ref || o.displayId}</b></td>
+        <td>{o.name}<br /><span className="mask">{mask(o.phone)}</span>{o.method ? ` · ${o.method}` : ''}</td>
+        <td>{o.at ? ago(o.at) : '—'}</td>
+        <td>₦{Number(o.total).toLocaleString()}</td>
+        <td style={Number(o.submitted || o.paid || 0) < Number(o.total) ? { color: 'var(--red)', fontWeight: 700 } : undefined}>₦{Number(o.submitted || o.paid || 0).toLocaleString()}</td>
+        <td>{o.submitted ? '🧾 Yes' : '—'}</td>
+        <td><span className="badge">{o.status || o.st}</span></td>
+        <td><a className="btn" style={{ textDecoration: 'none', padding: '8px 14px', minHeight: 0 }} href={`/admin/orders/${o.referenceId || o.ref || o.displayId}`}>Review</a> <button className="btn-s" onClick={() => { setPop({ mode: 'confirm', ref: o.referenceId || o.ref }); }}>✓</button> <button className="btn-d" onClick={() => { setPop({ mode: 'reject', ref: o.referenceId || o.ref }); }}>✕</button></td>
+      </tr>)}</tbody>
+    </table></div>
+    {rows.length === 0 && <div className="empty">Nothing here.</div>}
     {pop && (<div className="card"><h3>{pop.mode === 'confirm' ? 'Have you seen this payment in our bank?' : 'Reject this order?'}</h3>
       {pop.mode === 'reject' && <div><select value={popReason} onChange={(e) => setPopReason(e.target.value)}>{['Underpayment', 'Fake receipt', 'Wrong order'].map((r) => <option key={r} value={r}>{r}</option>)}</select></div>}
       <div><b>{popMsg}</b></div>
-      <button className="btn" onClick={async () => {
-        if (pop.mode === 'confirm') {
-          const it = items.find((x) => (x.referenceId || x.ref) === pop.ref);
-          if (Number(it.submitted || 0) < Number(it.total || 0)) { setPopMsg('Underpaid — open the order instead.'); return; }
-          const r: any = await confirmOrder({ pendingRef: pop.ref, verifiedAmount: Number(it.submitted), seenBank: true }).catch(() => null);
-          if (r && r.ok) { setPop(null); load(); } else setPopMsg('Not saved — ' + ((r && r.reason) || 'try again') + '. Nothing changed.');
-        } else {
-          const r: any = await rejectPending({ ref: pop.ref, reason: popReason, admin: 'owner' }).catch(() => null);
-          if (r && r.ok) { setPop(null); load(); } else setPopMsg('Could not reject. Try again.');
-        }
-      }}>Yes</button> <button className="btn-s" onClick={() => setPop(null)}>Back</button></div>)}
-    <div className="card"><b>Exports</b> <button className="btn-s" onClick={() => csv('orders')}>Orders CSV</button> <button className="btn-s" onClick={() => csv('customers')}>Customers CSV</button></div>
+      <button className="btn" onClick={quick}>Yes</button> <button className="btn-s" onClick={() => setPop(null)}>Back</button></div>)}
+    <div className="card"><b>Bulk progress ({sel.length} picked)</b><div>{['packaged', 'onway', 'ready', 'completed'].map((t) => <button key={t} className="btn-s" style={{ marginRight: 6 }} onClick={() => bulk(t)}>→ {t}</button>)}</div></div>
+    {stats && <div className="card small">Today sales ₦{Number(stats.salesToday).toLocaleString()} • open orders {stats.openOrders} • stockpiled {stats.stockpiled} • store credit owed ₦{Number(stats.creditOwed).toLocaleString()} • <button className="btn-s" onClick={() => csv('orders')}>Orders CSV</button> <button className="btn-s" onClick={() => csv('customers')}>Customers CSV</button></div>}
     {remind.length > 0 && <div className="card"><b>Not-completed reminders due ({remind.length})</b>{remind.map((o: any) => <div key={o.id} className="small">{o.displayId} • {o.st} — remind customer + owner</div>)}</div>}
-    {fees.length > 0 && <div className="card"><b>Stockpile fee payments ({fees.length})</b>{fees.slice(0, 20).map((f: any) => <div key={f.id} className="small">#{f.id} {f.displayId} ₦{Number(f.amount).toLocaleString()} [{f.status}]</div>)}</div>}
-    {aged.length > 0 && <div className="card"><b>Past max stockpile days ({aged.length}) — contact first, then release</b>{aged.map((o: any) => <div key={o.id} className="small">{o.displayId} • {o.name} • uncollected {o.days} days (max {o.maxd}) <button className="btn-d" onClick={async () => { await releaseStockpile({ orderId: o.id, actor: 'owner' }); load(); }}>Release to stock</button></div>)}</div>}
-  </div>);
+    {aged.length > 0 && <div className="card"><b>Past max stockpile days ({aged.length}) — contact first, then release</b>{aged.map((o: any) => <div key={o.id} className="small">{o.displayId} • {o.name} • uncollected {o.days} days (max {o.maxd}) <button className="btn-d" onClick={async () => { const { releaseStockpile } = await import('../../lib/shop-v1'); await releaseStockpile({ orderId: o.id, actor: 'owner' }); load(); }}>Release to stock</button></div>)}</div>}
+  </AdminShell>);
 }

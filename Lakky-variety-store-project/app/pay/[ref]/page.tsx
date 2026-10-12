@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { getSettings, submitReceipt } from '../../../lib/shop-actions';
 import { ensureReference } from '../../../lib/shop-v1';
+import Steps from '../../checkout/steps';
 import { seedSettings } from '../../../db/seed';
 
 function copyText(t: string, done: () => void) {
@@ -79,23 +80,29 @@ export default function PayPage({ params }: { params: { ref: string } }) {
     localStorage.removeItem('lakky-cart');
     setDone(true); setSending(false);
   };
-  if (done) return (<div className="card"><h2>Thank you! We got it.</h2>
-    <div>Your reference: <b>{params.ref}</b> <button className="btn" onClick={() => copyText(params.ref, () => { setCopied(true); setTimeout(() => setCopied(false), 2000); })}>{copied ? 'Copied ✓' : 'Copy'}</button></div>
-    <div><a href="/orders">Track your order →</a></div></div>);
-  return (<div className="card"><h2>Pay {params.ref}</h2>
-    <div><b>Amount to pay: ₦{total.toLocaleString()}</b></div>
-    <div className="small">Bank: {bank.bank} • Account number: {bank.accountNumber} <button className="btn-s" onClick={() => copyText(String(bank.accountNumber || ''), () => { setCopiedAcct(true); setTimeout(() => setCopiedAcct(false), 2000); })}>{copiedAcct ? 'Copied ✓' : 'Copy'}</button> • Name: {bank.accountName}</div>
-    <div className="small"><b>Pay ONLY to the account shown on this screen. Our details can change. Do not use a saved beneficiary.</b></div>
-    <div>Your reference: <b>{refId || params.ref}</b> <button className="btn" onClick={() => copyText(refId || params.ref, () => { setCopied(true); setTimeout(() => setCopied(false), 2000); })}>{copied ? 'Copied ✓' : 'Copy'}</button></div>
-    <div className="small">Writing this reference in your bank's remark box is optional, but it helps us find your order fast. If you pay by USSD or your bank has no remark box, that's fine.</div>
-    <input placeholder="Reference from your bank receipt (optional, you can paste it)" value={typedRef} onChange={(e) => setTypedRef(e.target.value)} />
-    <div className="small">Upload your receipt (photo, up to 5MB)</div>
-    <input type="file" accept="image/*" onChange={(e) => onFile(e.target.files?.[0])} />
-    <div className="small">A screenshot of your bank app, your bank's SMS alert, or a clear photo of the receipt all work.</div>
+  if (done) return (<div><div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><a href="/checkout" style={{ textDecoration: 'none', fontSize: 20 }}>←</a><h2 style={{ margin: 0 }}>Done</h2></div>
+    <div className="card" style={{ textAlign: 'center' }}><h2>Thank you! We got it.</h2>
+    <div>Your reference: <b>{refId || params.ref}</b> <button className="btn-s" onClick={() => copyText(refId || params.ref, () => { setCopied(true); setTimeout(() => setCopied(false), 2000); })}>{copied ? 'Copied ✓' : 'Copy'}</button></div>
+    <div style={{ marginTop: 8 }}><a className="btn" href="/orders" style={{ textDecoration: 'none' }}>Track your order →</a></div></div></div>);
+  return (<div>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><a href="/checkout" style={{ textDecoration: 'none', fontSize: 20 }}>←</a><h2 style={{ margin: 0 }}>Pay</h2><span style={{ flex: 1 }} /><span className="badge badge-mut">{refId || params.ref}</span></div>
+    <Steps step={3} />
+    <div className="card" style={{ textAlign: 'center' }}><div className="small" style={{ fontWeight: 700 }}>TRANSFER EXACTLY</div>
+      <div style={{ fontSize: 34, fontWeight: 800, color: 'var(--plum)' }}>₦{total.toLocaleString()}</div>
+      <button className="btn-s" onClick={() => copyText(String(total), () => { setCopied(true); setTimeout(() => setCopied(false), 2000); })}>{copied ? 'Copied ✓' : 'Copy amount'}</button></div>
+    <div className="card"><div className="small" style={{ fontWeight: 700 }}>TO THIS ACCOUNT</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0' }}><span>Bank</span><b>{bank.bank}</b></div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: '1px dashed var(--line)' }}><span>Account no.</span><span><b>{bank.accountNumber}</b> <button className="btn-s" onClick={() => copyText(String(bank.accountNumber || ''), () => { setCopiedAcct(true); setTimeout(() => setCopiedAcct(false), 2000); })}>{copiedAcct ? 'Copied ✓' : 'Copy'}</button></span></div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: '1px dashed var(--line)' }}><span>Name</span><b>{bank.accountName}</b></div></div>
+    <div className="card"><div className="small" style={{ fontWeight: 700 }}>YOUR REFERENCE: {refId || params.ref}</div>
+      <div className="small">Writing this reference in your bank's remark box is optional, but it helps us find your order fast. If you pay by USSD or your bank has no remark box, that's fine.</div>
+      <input placeholder="Reference from your bank receipt (optional, you can paste it)" value={typedRef} onChange={(e) => setTypedRef(e.target.value)} /></div>
+    <label htmlFor="receipt-file"><div className="dropzone"><div style={{ fontSize: 28 }}>🧾</div><b>Upload your receipt</b><div className="small">Screenshot, SMS alert or photo • up to 5MB</div></div></label>
+    <input id="receipt-file" type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => onFile(e.target.files?.[0])} />
+    {file && <div className="small">Photo ready ✓ (tap the box to change it)</div>}
     {fileErr && <div><b>{fileErr}</b></div>}
     <div><label><input type="checkbox" checked={box1} onChange={(e) => setBox1(e.target.checked)} /> I confirm I have transferred ₦{total.toLocaleString()}.</label></div>
-    <div><label><input type="checkbox" checked={box2} onChange={(e) => setBox2(e.target.checked)} /> I have read and agree to the rules.</label> <a href="/terms" target="_blank" rel="noreferrer">Read the rules</a></div>
-    <div className="small">Short version: we keep your items free for {s.freeHoldDays} days. After that, ₦{Number(s.globalDailyFee).toLocaleString()} per day.</div>
-    <button className="btn" disabled={!canSubmit} onClick={submit}>{sending ? 'Sending…' : 'Submit'}</button>
+    <div><label><input type="checkbox" checked={box2} onChange={(e) => setBox2(e.target.checked)} /> I agree to the <a href="/terms" target="_blank" rel="noreferrer">store rules</a> (free {s.freeHoldDays}-day hold, then ₦{Number(s.globalDailyFee).toLocaleString()}/day).</label></div>
+    <button className="btn" style={{ width: '100%' }} disabled={!canSubmit} onClick={submit}>{sending ? 'Sending…' : 'Submit receipt'}</button>
     {sendErr && <div><b>{sendErr}</b></div>}</div>);
 }

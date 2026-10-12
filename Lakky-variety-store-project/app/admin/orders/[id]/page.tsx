@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { confirmOrder, getSubmissionProof } from '../../../../lib/shop-actions';
 import { useAdminGuard } from '../../../../lib/use-admin-guard';
+import AdminShell from '../../shell';
 import { getOrderThread, getPendingDetail, listFees, listRefunds, decideRefund, markFeePaid, postMessage, rejectPending, advanceOrder, underPending } from '../../../../lib/shop-v1';
 import { stepLabel } from '../../../../lib/pricing';
 const REJECTS = ['Underpayment', 'Fake receipt', 'Wrong order'];
@@ -81,25 +82,43 @@ export default function AdminOrder({ params }: { params: { id: string } }) {
     await markFeePaid({ orderId, kind, admin: 'owner' }).catch(() => null);
     setMsg(kind === 'delivery' ? 'Delivery fee marked paid.' : 'Stockpile fee marked paid.');
   };
-  if (!o) return <div className="card">No order with this reference in Supabase yet.</div>;
+  if (!o) return <AdminShell><div className="card">No order with this reference in Supabase yet.</div></AdminShell>;
   if (!allowed) return <div className="card">Checking admin session…</div>;
-  return (<div><div className="card"><h2>Order {params.id} — full record</h2>
-    <div>Customer: {o.name} • {o.phone} • {o.method} {o.area}</div>
-    <div>Expected ₦{(o.total||0).toLocaleString()} vs Submitted ₦{o.amount} • Date {o.date} • Ref {o.ref}{live && live.pending && live.pending.reference_id ? ` • ${live.pending.reference_id}` : ''}</div>
-    {live && live.submissions && live.submissions.length > 0 && <div className="small">Submitted amounts: {live.submissions.map((s: any) => `₦${Number(s.amountClaimed).toLocaleString()}`).join(' + ')}{live.submissions[live.submissions.length - 1].reference ? ` • bank ref: ${live.submissions[live.submissions.length - 1].reference}` : ''}</div>}
-    <div>Stockpile: confirmed date → free days → daily fee (live Settings). Release blocked if fee unpaid.</div>
-    {proofUrl ? <div><div className="small">Customer receipt:</div><img src={proofUrl} alt="payment receipt" style={{ maxWidth: '100%', borderRadius: 10 }} /></div> : null}
-    <div><label><input type="checkbox" checked={seenBank} onChange={e=>setSeenBank(e.target.checked)} /> I have seen the payment — required</label></div>
-    <button className="btn" onClick={() => act('confirm')}>Confirm</button> <button className="btn" onClick={() => act('under')}>Mark Under</button>
-    {orderId && (<div style={{ marginTop: 8 }}><b>Progress: {stepLabel(curStatus) || curStatus || '…'}</b><div>
-      {curStatus === 'processing' && <button className="btn-s" onClick={() => step('packaged')}>Next: Being packed →</button>}
-      {curStatus === 'packaged' && <span><button className="btn-s" onClick={() => step('onway')}>On the way →</button> <button className="btn-s" onClick={() => step('ready')}>Ready for pickup →</button></span>}
-      {(curStatus === 'onway' || curStatus === 'ready') && <button className="btn-s" onClick={() => step('completed')}>Completed →</button>}
-    </div></div>)}
-    <div style={{ marginTop: 8 }}><b>Reject with reason</b> <select value={reason} onChange={(e) => setReason(e.target.value)}>{REJECTS.map((r) => <option key={r} value={r}>{r}</option>)}</select> <input placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} /> <button className="btn-d" onClick={() => act('reject')}>Reject</button></div>
-    <div style={{ marginTop: 8 }}><button className="btn-s" onClick={() => fee('delivery')}>Delivery fee paid</button> <button className="btn-s" onClick={() => fee('stockpile')}>Stockpile fee paid</button></div>
-    <div><b>{msg}</b></div>
-    <div><a className="btn" href={`https://wa.me/${String(o.phone||'').replace(/\D/g,'')}?text=${encodeURIComponent(`Hello from Lakky Variety Store. Order ${params.id} update.`)}`} target="_blank" rel="noreferrer">Send WhatsApp update</a></div></div>
+  const short = Number(o.amount || 0) < Number(o.total || 0) ? Number(o.total) - Number(o.amount) : 0;
+  return (<AdminShell><div><a href="/admin" style={{ textDecoration: 'none' }}>← Orders</a> <span className="badge">{live && live.pending ? live.pending.status : ''}</span></div>
+  <div className="twocol">
+    <div className="card"><div className="small" style={{ fontWeight: 700 }}>CUSTOMER RECEIPT</div>
+      {proofUrl ? <img src={proofUrl} alt="payment receipt" style={{ width: '100%', borderRadius: 10 }} /> : <div className="empty">No receipt uploaded yet.</div>}
+    </div>
+    <div>
+      <div className="card"><div className="small" style={{ fontWeight: 700 }}>PAYMENT CHECK</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <div className="expectbox" style={{ flex: 1 }}><div className="small">Expected</div><b>₦{Number(o.total || 0).toLocaleString()}</b></div>
+          <div className="claimbox" style={{ flex: 1 }}><div className="small">Claimed</div><b>₦{Number(o.amount || 0).toLocaleString()}</b></div>
+        </div>
+        {short > 0 && <div className="notice-err">₦{short.toLocaleString()} short — ask for a top-up in messages below.</div>}
+        <div className="small" style={{ fontWeight: 700, marginTop: 8 }}>AMOUNT YOU SAW IN YOUR BANK</div>
+        <div><label><input type="checkbox" checked={seenBank} onChange={e=>setSeenBank(e.target.checked)} /> I checked my bank app / SMS (not just this screenshot)</label></div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <button className="btn-ok" style={{ flex: 1 }} onClick={() => act('confirm')}>Confirm</button>
+          <button className="btn-d" style={{ flex: 1 }} onClick={() => act('reject')}>Reject</button>
+        </div>
+        <div style={{ marginTop: 8 }}><b>Reject reason</b> <select value={reason} onChange={(e) => setReason(e.target.value)}>{REJECTS.map((r) => <option key={r} value={r}>{r}</option>)}</select> <input placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} /></div>
+      </div>
+      <div className="card"><div className="small" style={{ fontWeight: 700 }}>ORDER</div>
+        <div>Customer: {o.name} • {o.phone} • {o.method} {o.area}</div>
+        <div>Expected ₦{(o.total||0).toLocaleString()} vs Submitted ₦{o.amount} • Date {o.date} • Ref {o.ref}{live && live.pending && live.pending.reference_id ? ` • ${live.pending.reference_id}` : ''}</div>
+        {live && live.submissions && live.submissions.length > 0 && <div className="small">Submitted amounts: {live.submissions.map((s: any) => `₦${Number(s.amountClaimed).toLocaleString()}`).join(' + ')}{live.submissions[live.submissions.length - 1].reference ? ` • bank ref: ${live.submissions[live.submissions.length - 1].reference}` : ''}</div>}
+        <div style={{ marginTop: 8 }}><button className="btn-s" onClick={() => fee('delivery')}>Delivery fee paid</button> <button className="btn-s" onClick={() => fee('stockpile')}>Stockpile fee paid</button></div>
+        {orderId && (<div style={{ marginTop: 8 }}><b>Progress: {stepLabel(curStatus) || curStatus || '…'}</b><div>
+          {curStatus === 'processing' && <button className="btn-s" onClick={() => step('packaged')}>Next: Being packed →</button>}
+          {curStatus === 'packaged' && <span><button className="btn-s" onClick={() => step('onway')}>On the way →</button> <button className="btn-s" onClick={() => step('ready')}>Ready for pickup →</button></span>}
+          {(curStatus === 'onway' || curStatus === 'ready') && <button className="btn-s" onClick={() => step('completed')}>Completed →</button>}
+        </div></div>)}
+        <div><b>{msg}</b></div>
+      </div>
+    </div>
+    </div>
     <div className="card"><h3>Messages</h3>
       {!orderId && <div className="small">Confirm the order to open its message thread.</div>}
       {msgs.map((m, i) => <div key={i} className="small"><b>{m.sender}:</b> {m.text}</div>)}
@@ -111,5 +130,5 @@ export default function AdminOrder({ params }: { params: { id: string } }) {
     <div className="card"><h3>Refund / credit requests</h3>
       {refunds.length === 0 && <div className="small">None pending.</div>}
       {refunds.map((r) => <div key={r.id} className="small">#{r.id} {r.kind} ₦{Number(r.amount).toLocaleString()} {r.bank_name} {r.account_number} {r.account_name} [{r.status}] <button className="btn-s" onClick={async () => { await decideRefund({ id: r.id, approve: true, admin: 'owner' }); setRefunds(refunds.filter((x) => x.id !== r.id)); }}>Approve</button> <button className="btn-d" onClick={async () => { await decideRefund({ id: r.id, approve: false, admin: 'owner' }); setRefunds(refunds.filter((x) => x.id !== r.id)); }}>Decline</button></div>)}
-    </div></div>);
+    </div></AdminShell>);
 }

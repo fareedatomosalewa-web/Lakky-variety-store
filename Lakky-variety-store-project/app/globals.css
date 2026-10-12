@@ -35,6 +35,9 @@ input:focus,select:focus{outline:2px solid var(--plum);outline-offset:-1px;borde
 .catchips{display:flex;gap:8px;overflow-x:auto;padding:4px 2px 10px;margin:0 -2px}
 .catchips button{flex:0 0 auto;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:9px 15px;font-size:14px;font-weight:600;color:var(--ink);cursor:pointer;font-family:inherit}
 .catchips button.on{background:var(--plum);border-color:var(--plum);color:#fff}
+.dropzone{border:2px dashed var(--terra);border-radius:var(--radius);padding:22px;text-align:center;background:var(--card);cursor:pointer;margin:10px 0}
+.dropzone b{font-size:17px}
+input[type="checkbox"]{width:22px;height:22px;accent-color:var(--plum);vertical-align:middle}
 .seg{display:flex;background:#F3ECE4;border-radius:12px;padding:4px;margin:8px 0}
 .seg button{flex:1;border:0;background:transparent;border-radius:9px;padding:11px;font-size:15px;font-weight:600;color:var(--muted);cursor:pointer;font-family:inherit}
 .seg button.on{background:#fff;color:var(--plum);box-shadow:0 1px 3px rgba(90,41,72,.12)}
@@ -67,3 +70,21 @@ input:focus,select:focus{outline:2px solid var(--plum);outline-offset:-1px;borde
 .notice-err{background:#F9E9E8;border:1px solid #EAC4C2;color:var(--red);border-radius:var(--radius-s);padding:10px 12px;margin:8px 0}
 table{width:100%;border-collapse:collapse;font-size:14px}
 th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line)}
+.adminwrap{display:flex;gap:0;align-items:flex-start}
+.sidebar{background:var(--plum);color:#fff;border-radius:var(--radius);padding:14px;min-width:190px;position:sticky;top:70px}
+.sidebar nav{display:flex;flex-direction:column;gap:2px;margin-top:8px}
+.sidebar nav a{color:#E8CFC2;text-decoration:none;padding:10px 12px;border-radius:9px;font-size:15px;font-weight:600}
+.sidebar nav a.on{background:rgba(255,255,255,.16);color:#fff}
+.adminmain{flex:1;min-width:0;padding-left:14px}
+.sumgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.sumcard{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:12px;box-shadow:0 1px 3px rgba(90,41,72,.06)}
+.sumcard .n{font-size:24px;font-weight:800}
+.sumcard .t{font-size:12px;color:var(--muted);font-weight:700}
+.twocol{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:860px){.twocol{grid-template-columns:1fr}.adminwrap{flex-direction:column}.sidebar{position:static;min-width:0;width:100%}.sidebar nav{flex-direction:row;flex-wrap:wrap}.adminmain{padding-left:0}}
+.expectbox{background:#FDF6EE;border:1px solid var(--line);border-radius:var(--radius-s);padding:10px}
+.claimbox{background:#FDF6EE;border:1px solid var(--line);border-radius:var(--radius-s);padding:10px}
+.claimbox b{color:var(--red)}
+.btn-ok{background:var(--green);color:#fff;border:0;border-radius:var(--radius-s);padding:12px 22px;font-weight:700;font-size:15px;cursor:pointer;font-family:inherit;min-height:44px}
+.tablewrap{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:0 1px 3px rgba(90,41,72,.06)}
+.mask{color:var(--muted)}

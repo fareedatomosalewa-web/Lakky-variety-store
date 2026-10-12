@@ -47,14 +47,14 @@ assert(!isAbandoned(0, 90, 60), 'no fee → never abandoned');
 // 7. agreed_at + seen-in-bank (check code wiring, not just functions)
 // v1.10: agreement lives on the pay page (two checkboxes + Read the rules); agreed_at stored by submitReceipt
 const paySrc = fs.readFileSync(path.join(__dirname, 'app', 'pay', '[ref]', 'page.tsx'), 'utf8');
-assert(paySrc.includes('agree to the rules') && paySrc.includes('transferred'), 'pay page has both agreement checkboxes');
+assert(paySrc.includes('agree to the') && paySrc.includes('transferred'), 'pay page has both agreement checkboxes');
 assert(paySrc.includes('/terms'), 'pay page links Read the rules → /terms');
 const actionsSrc = fs.readFileSync(path.join(__dirname, 'lib', 'shop-actions.ts'), 'utf8');
 assert(actionsSrc.includes('agreedAt: new Date()'), 'submitReceipt stores agreed_at on submit');
 const adminOrderSrc = fs.readFileSync(path.join(__dirname, 'app', 'admin', 'orders', '[id]', 'page.tsx'), 'utf8');
 assert(adminOrderSrc.includes('I have seen the payment'), 'admin verify requires payment-seen tick');
 assert(adminOrderSrc.includes('confirmOrder') && adminOrderSrc.includes('displayId'), 'admin confirm uses server LVS-serial-last4 order');
-assert(adminOrderSrc.includes('wa.me'), 'admin has WhatsApp wa.me button (manual, no API)');
+assert(!adminOrderSrc.includes('wa.me'), 'no WhatsApp button on admin order (in-app messages only, owner rule)');
 
 // 8. Track rate-limit 5/hour/IP
 let hits = new Map();
