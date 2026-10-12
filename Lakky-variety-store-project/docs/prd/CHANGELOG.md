@@ -19,3 +19,4 @@ v1.14 → owner Part 1: 2 IDs only (P-refs internal), account-first shopping, de
 v1.15 → demo urgent: loud confirm, list popup, 3 reject reasons, progress + notify, data repair.
 v1.16 → pre-demo fixes: admin gates, Supabase-first admin, staged tracking, hardening. All suites PASS.
 v1.17 → owner Part 1 follow-ups: REF-keyed lookups, pending message threads, track notices, data repair. All checks PASS.
+v1.18 → owner design pictures screens 1–6 approved: home, checkout, pay, track timeline, admin list + review, overrides honored. All suites PASS.
