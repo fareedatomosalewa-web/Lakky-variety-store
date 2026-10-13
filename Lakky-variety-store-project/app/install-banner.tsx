@@ -12,9 +12,6 @@ export default function InstallBanner() {
       window.matchMedia('(display-mode: standalone)').matches ||
       (window.navigator as any).standalone === true;
     if (installed) return;
-    try {
-      if (localStorage.getItem('lakky-install-hide') === '1') return;
-    } catch { /* show anyway */ }
     const onPrompt = (e: any) => { e.preventDefault(); setEvt(e); };
     const onDone = () => setOut(true);
     window.addEventListener('beforeinstallprompt', onPrompt);
@@ -25,10 +22,7 @@ export default function InstallBanner() {
     };
   }, []);
   if (out || !evt) return null;
-  const hide = () => {
-    try { localStorage.setItem('lakky-install-hide', '1'); } catch { /* ignore */ }
-    setOut(true);
-  };
+  const hide = () => setOut(true);
   const go = async () => {
     try { await evt.prompt(); await evt.userChoice; } catch { /* ignore */ }
     hide();
