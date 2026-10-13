@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { confirmOrder, getSubmissionProof } from '../../../../lib/shop-actions';
 import { useAdminGuard } from '../../../../lib/use-admin-guard';
+import { n } from '../../../../lib/pricing';
 import AdminShell from '../../shell';
 import { getOrderThread, getPendingDetail, listFees, listRefunds, decideRefund, markFeePaid, postMessage, rejectPending, advanceOrder, underPending } from '../../../../lib/shop-v1';
 import { stepLabel } from '../../../../lib/pricing';
@@ -41,7 +42,8 @@ export default function AdminOrder({ params }: { params: { id: string } }) {
   const reloadMsgs = async () => { const r: any = await getOrderThread({ ref: params.id }).catch(() => null); if (r && r.ok) { setOrderId(r.orderId); setMsgs(r.messages || []); if (r.status) setCurStatus(r.status); } };
   const act = async (kind: string) => {
     if (busy) return;
-    const expected = Number(o.total || 0), paid = Number(o.amount || 0);
+    const expected = n(o.total), paid = n(o.amount);
+    if (!expected) { setMsg('No expected amount on this order — open it from the queue again.'); return; }
     if (kind === 'confirm') {
       if (!seenBank) { setMsg('Tick “I have seen the payment” first — confirm means the money is in our bank.'); return; }
       if (paid < expected) { setMsg(`Blocked: underpayment outstanding ₦${(expected - paid).toLocaleString()}`); return; }
@@ -107,8 +109,8 @@ export default function AdminOrder({ params }: { params: { id: string } }) {
       </div>
       <div className="card"><div className="small" style={{ fontWeight: 700 }}>ORDER</div>
         <div>Customer: {o.name} • {o.phone} • {o.method} {o.area}</div>
-        <div>Expected ₦{(o.total||0).toLocaleString()} vs Submitted ₦{o.amount} • Date {o.date} • Ref {o.ref}{live && live.pending && live.pending.reference_id ? ` • ${live.pending.reference_id}` : ''}</div>
-        {live && live.submissions && live.submissions.length > 0 && <div className="small">Submitted amounts: {live.submissions.map((s: any) => `₦${Number(s.amountClaimed).toLocaleString()}`).join(' + ')}{live.submissions[live.submissions.length - 1].reference ? ` • bank ref: ${live.submissions[live.submissions.length - 1].reference}` : ''}</div>}
+    <div>Expected ₦{n(o.total).toLocaleString()} vs Submitted ₦{n(o.amount)} • Date {o.date} • Ref {o.ref}{live && live.pending && live.pending.reference_id ? ` • ${live.pending.reference_id}` : ''}</div>
+    {live && live.submissions && live.submissions.length > 0 && <div className="small">Submitted amounts: {live.submissions.map((s: any) => `₦${n(s.amountClaimed).toLocaleString()}`).join(' + ')}{live.submissions[live.submissions.length - 1].reference ? ` • bank ref: ${live.submissions[live.submissions.length - 1].reference}` : ''}</div>}
         <div style={{ marginTop: 8 }}><button className="btn-s" onClick={() => fee('delivery')}>Delivery fee paid</button> <button className="btn-s" onClick={() => fee('stockpile')}>Stockpile fee paid</button></div>
         {orderId && (<div style={{ marginTop: 8 }}><b>Progress: {stepLabel(curStatus) || curStatus || '…'}</b><div>
           {curStatus === 'processing' && <button className="btn-s" onClick={() => step('packaged')}>Next: Being packed →</button>}

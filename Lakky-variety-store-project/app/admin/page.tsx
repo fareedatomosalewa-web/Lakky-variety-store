@@ -123,7 +123,7 @@ export default function AdminDash() {
         <td data-th="Submitted">{o.at ? ago(o.at) : '—'}</td>
         <td data-th="Expected">₦{Number(o.total).toLocaleString()}</td>
         <td data-th="Claimed" style={Number(o.submitted || o.paid || 0) < Number(o.total) ? { color: 'var(--red)', fontWeight: 700 } : undefined}>₦{Number(o.submitted || o.paid || 0).toLocaleString()}</td>
-        <td data-th="Receipt">{o.submitted ? '🧾 Yes' : '—'}</td>
+        <td data-th="Receipt">{o.hasReceipt ? '🧾 Yes' : '—'}</td>
         <td data-th="Status"><span className="badge">{o.status || o.st}</span></td>
         <td data-th="Open"><a className="btn" style={{ textDecoration: 'none', padding: '8px 14px', minHeight: 0 }} href={`/admin/orders/${o.referenceId || o.ref || o.displayId}`}>Review</a> <button className="btn-s" onClick={() => { setPop({ mode: 'confirm', ref: o.referenceId || o.ref }); setPopMsg(''); }}>✓</button> <button className="btn-d" onClick={() => { setPop({ mode: 'reject', ref: o.referenceId || o.ref }); setPopMsg(''); }}>✕</button></td>
       </tr>)}</tbody>

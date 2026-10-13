@@ -91,7 +91,7 @@ export async function listPending() {
     // ADMIN-GATED:listPending
     if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
-    const rows = await sql`select p.id, p.ref, p.reference_id as "referenceId", p.expected_total as total, p.status, p.created_at as "at", c.full_name as name, c.phone, (select max(amount_claimed) from payment_submissions s where s.pending_id=p.id) as submitted from pending_refs p left join customers c on c.id=p.customer_id where p.status in ('pending','under') order by p.id desc limit 200`;
+    const rows = await sql`select p.id, p.ref, p.reference_id as "referenceId", p.expected_total as total, p.status, p.created_at as "at", c.full_name as name, c.phone, (select max(amount_claimed) from payment_submissions s where s.pending_id=p.id) as submitted, exists(select 1 from payment_submissions s where s.pending_id=p.id and s.proof_url is not null and s.proof_url <> '') as "hasReceipt" from pending_refs p left join customers c on c.id=p.customer_id where p.status in ('pending','under') order by p.id desc limit 200`;
     await sql.end();
     return { ok: true as const, rows };
   } catch { return { ok: false as const, rows: [] as any[] }; }

@@ -1,4 +1,9 @@
 // Pure pricing + code helpers — NO "use server" here (imported by pages AND actions).
+// n() guards every displayed amount: blank/NULL data shows 0, never NaN.
+export function n(v: unknown): number {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : 0;
+}
 const STEP_LABEL: Record<string, string> = {
   pending: 'Waiting for confirmation', processing: 'Confirmed', packaged: 'Being packed',
   ready: 'Ready for pickup', onway: 'On the way', completed: 'Completed',
