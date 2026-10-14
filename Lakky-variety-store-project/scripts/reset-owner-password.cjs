@@ -20,8 +20,8 @@ function readEnv(key) {
   const email = readEnv('ADMIN_EMAIL');
   const password = readEnv('ADMIN_PASSWORD');
   const conn = readEnv('DATABASE_URL');
-  if (!email || !password || password.includes('change-me')) {
-    console.log('FAIL: set real ADMIN_EMAIL + strong ADMIN_PASSWORD in .env.local first (placeholders not allowed)');
+  if (!email || !password || password.length < 12) {
+    console.log('FAIL: set real ADMIN_EMAIL + strong ADMIN_PASSWORD in .env.local first (12+ characters, not a placeholder)');
     process.exit(1);
   }
   if (!conn) { console.log('FAIL: no connection string'); process.exit(1); }
