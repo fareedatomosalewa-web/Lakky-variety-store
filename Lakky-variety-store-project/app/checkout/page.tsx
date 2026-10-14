@@ -1,7 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { createPending } from '../../lib/shop-actions';
-import { ensureReference } from '../../lib/shop-v1';
 import { quoteWithCredit } from '../../lib/shop-v1';
 import { seedSettings } from '../../db/seed';
 import Steps from './steps';
@@ -34,7 +33,7 @@ export default function CheckoutPage() {
     const c = custKey();
     if (c) { setName(c.name || ''); setPhone(c.phone || ''); }
   }, []);
-  const total = cart.reduce((s, l) => s + (l.price + (l.addon ? l.addon.price : 0)) * l.qty, 0);
+  const total = cart.reduce((s, l) => s + (l.price + ((l.addons || (l.addon ? [l.addon] : [])).reduce((x: number, a: any) => x + Number(a.price), 0))) * l.qty, 0);
   useEffect(() => {
     if (!phone || !total) { setQuote(null); return; }
     quoteWithCredit({ phone, total, coupon: coupon || undefined }).then((r: any) => setQuote(r.ok ? r : null)).catch(() => setQuote(null));
@@ -51,20 +50,17 @@ export default function CheckoutPage() {
       return;
     }
     if (method === 'Stockpile' && !day) { alert('Please pick a fulfilment date for stockpile.'); }
-    const lines = cart.map((l: any) => ({ attrs: l.attrs || { colour: l.colour, size: l.size }, price: l.price, qty: l.qty, addon: l.addon }));
+    const lines = cart.map((l: any) => ({ attrs: l.attrs || { colour: l.colour, size: l.size }, price: l.price, qty: l.qty, addons: (l.addons || (l.addon ? [l.addon] : [])).map((a: any) => ({ name: a.name, price: Number(a.price) })) }));
     setSending(true);
     try {
       const idemKey = `${normalizePhone(phone)}|${cart.map((l: any) => `${l.key || l.name}x${l.qty}`).join(',')}|${total}`;
       const r: any = await createPending({ name, phone, method, area, day, agreedAt: '', lines, total, creditApplied: quote ? quote.used : 0, couponCode: coupon || undefined, token, idemKey });
       if (r.ok) {
         const payTotal = typeof r.total === 'number' ? r.total : total;
-        let code = r.ref;
-        try {
-          const rr: any = await ensureReference({ pendingRef: r.ref });
-          if (rr.ok) code = rr.referenceId;
-        } catch { /* internal ref stays */ }
-        localStorage.setItem('lakky-pending', JSON.stringify({ ref: code, pendingId: r.pendingId, name, phone, method, area, day, total: payTotal, creditUsed: quote ? quote.used : 0, coupon, live: true }));
-        location.href = '/pay/' + code;
+        // One Order ID, given at submit. It names the order everywhere.
+        const code = r.displayId || r.ref;
+        localStorage.setItem('lakky-pending', JSON.stringify({ ref: code, displayId: code, pendingId: r.pendingId, name, phone, method, area, day, total: payTotal, creditUsed: quote ? quote.used : 0, coupon, live: true }));
+        location.href = '/pay/' + encodeURIComponent(code);
         return;
       }
       if (r.reason === 'login-required') { setSending(false); alert('Please log in or create an account first.'); location.href = '/login'; return; }
@@ -91,7 +87,7 @@ export default function CheckoutPage() {
       <select value={day} onChange={e=>setDay(e.target.value)}><option value="">Pick a day (within 1 week)</option>{next7.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}</select>
     </div>
     <div className="card"><div className="small" style={{ fontWeight: 700 }}>ORDER SUMMARY</div>
-      {cart.map((l: any, i: number) => <div key={i} style={{ display: 'flex', justifyContent: 'space-between' }}><span>{l.name} × {l.qty}</span><b>₦{((l.price + (l.addon ? l.addon.price : 0)) * l.qty).toLocaleString()}</b></div>)}
+      {cart.map((l: any, i: number) => <div key={i} style={{ display: 'flex', justifyContent: 'space-between' }}><span>{l.name} × {l.qty}</span><b>₦{((l.price + ((l.addons || (l.addon ? [l.addon] : [])).reduce((x: number, a: any) => x + Number(a.price), 0))) * l.qty).toLocaleString()}</b></div>)}
       {quote && quote.used > 0 && <div className="small" style={{ display: 'flex', justifyContent: 'space-between' }}><span>Store credit</span><span>−₦{quote.used.toLocaleString()}</span></div>}
       {quote && quote.couponOff > 0 && <div className="small" style={{ display: 'flex', justifyContent: 'space-between' }}><span>Coupon</span><span>−₦{quote.couponOff.toLocaleString()}</span></div>}
       <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--line)', marginTop: 8, paddingTop: 8 }}><b>Total</b><b>₦{toPay.toLocaleString()}</b></div>

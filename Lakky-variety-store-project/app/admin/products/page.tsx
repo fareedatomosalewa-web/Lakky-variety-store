@@ -14,6 +14,7 @@ export default function AdminProducts() {
   const [coupons, setCoupons] = useState<any[]>([]);
   const [cp, setCp] = useState({ code: '', percent: '', expiry: '', limit: '10' });
   const [addon, setAddon] = useState({ name: '', price: '', stock: '' });
+  const [tag, setTag] = useState('');
   const [msg, setMsg] = useState('');
   const [photos, setPhotos] = useState<any[]>([]);
   if (!allowed) return <div className="card">Checking admin session…</div>;
@@ -25,6 +26,7 @@ export default function AdminProducts() {
       try { setTiers(r.product.wholesale_tiers ? JSON.stringify(typeof r.product.wholesale_tiers === 'string' ? JSON.parse(r.product.wholesale_tiers) : r.product.wholesale_tiers) : ''); } catch { setTiers(''); }
       setDisc({ type: r.product.discount_type || '', value: r.product.discount_value ?? '', start: r.product.discount_start ? String(r.product.discount_start).slice(0, 10) : '', end: r.product.discount_end ? String(r.product.discount_end).slice(0, 10) : '' });
       setThresh(r.product.low_stock_threshold ?? '');
+      setTag(r.product.status || '');
     } else { setP(null); setMsg('Not in Supabase yet — sync the catalogue first.'); }
   };
   const save = async () => {
@@ -33,6 +35,7 @@ export default function AdminProducts() {
     const r: any = await saveProductAdmin({
       name,
       patch: {
+        status: tag || null,
         low_stock_threshold: thresh === '' ? null : Number(thresh),
         wholesale_tiers: wt,
         discount_type: disc.type || null, discount_value: disc.value === '' ? null : Number(disc.value),
@@ -71,6 +74,8 @@ export default function AdminProducts() {
   const editor = p ? (<div className="card"><h3>{p.name}</h3>
     {photos.length > 0 && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{photos.map((m: any) => <div key={m.id}><img src={m.url} alt="" style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 8 }} /><br /><button className="btn-d" style={{ padding: '2px 8px', minHeight: 0 }} onClick={async () => { await deleteMedia({ id: m.id }); load(name); }}>Remove</button></div>)}</div>}
     <div><button className="btn-d" onClick={async () => { if (!window.confirm(`Delete ${name} for good?`)) return; const r: any = await deleteProduct({ name }).catch(() => null); setMsg(r && r.ok ? 'Deleted.' : 'Cannot delete — orders use this product.'); }}>Delete product</button></div>
+    <div className="small">Tag (customers see it on the product card; empty = no tag)</div>
+    <select value={tag} onChange={(e) => setTag(e.target.value)}><option value="">No tag</option><option value="New">New</option><option value="Restocked">Restocked</option></select>
     <div className="small">Low-stock alert number (customers see “Few pieces left” at/below it; empty = silent)</div>
     <input type="number" placeholder="e.g. 3 (empty = silent)" value={thresh} onChange={(e) => setThresh(e.target.value)} />
     {vars.map((v: any, i: number) => <div key={v.id} className="small">{Object.values(v.attrs).join(' / ')} — ₦<input type="number" value={v.price} onChange={(e) => { const c = [...vars]; c[i].price = e.target.value; setVars(c); }} style={{ width: 90 }} /> — stock <input type="number" value={v.available} onChange={(e) => { const c = [...vars]; c[i].available = e.target.value; setVars(c); }} style={{ width: 70 }} /></div>)}
@@ -83,7 +88,8 @@ export default function AdminProducts() {
     <input type="date" value={disc.end} onChange={(e) => setDisc({ ...disc, end: e.target.value })} />
     <div><button className="btn" onClick={save}>Save product</button> <button className="btn-s" onClick={restock}>Mark restocked</button></div>
     <div className="small">Photos (max 4 total, video ≤60s, ≤20MB, no downloads for viewers)</div>
-    <input type="file" accept="image/*,video/mp4,video/webm" onChange={(e) => upload(e.target.files?.[0])} />
+    <label htmlFor="admin-photo" className="btn" style={{ display: 'inline-block', textAlign: 'center' }}>📷 Add another picture</label>
+    <input id="admin-photo" type="file" accept="image/*,video/mp4,video/webm" style={{ display: 'none' }} onChange={(e) => upload(e.target.files?.[0])} />
     <div className="small">Add-on for this product (own price + stock)</div>
     <input placeholder="Name" value={addon.name} onChange={(e) => setAddon({ ...addon, name: e.target.value })} />
     <input type="number" placeholder="Price ₦" value={addon.price} onChange={(e) => setAddon({ ...addon, price: e.target.value })} />

@@ -17,11 +17,13 @@
     "next": "14.2.5",
     "postgres": "^3.4.4",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@types/node": "20.16.0",
     "@types/react": "18.3.3",
+    "@types/web-push": "^3.6.4",
     "autoprefixer": "10.4.20",
     "drizzle-kit": "^0.31.0",
     "pg-mem": "^3.0.14",

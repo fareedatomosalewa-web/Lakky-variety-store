@@ -115,6 +115,7 @@ export const pendingRefs = pgTable('pending_refs', {
   agreedAt: timestamp('agreed_at'),
   createdAt: timestamp('created_at').defaultNow(),
   idempotencyKey: text('idempotency_key').unique(),
+  displayId: text('display_id').unique(),
 });
 export const pendingItems = pgTable('pending_items', {
   id: serial('id').primaryKey(),

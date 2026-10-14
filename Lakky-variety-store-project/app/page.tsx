@@ -1,18 +1,20 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { FALLBACK_DESCRIPTION, driveImage, seedAddons, seedProducts, seedSettings } from '../db/seed';
+import { FALLBACK_DESCRIPTION, driveImage, seedProducts, seedSettings } from '../db/seed';
 import { discountFor, isNew, isRestocked } from '../lib/pricing';
 import { checkAdmin } from '../lib/admin-guard';
 import { useCustomerOnly } from '../lib/use-customer-only';
+import { listAddons } from '../lib/shop-v1';
+import { buildTree, normCat, prettyCat, pathOf } from '../lib/categories';
+import { CAT_EVENT, pickCategory, readTrail } from './site-nav';
 const isSet = (v: unknown) => v !== undefined && v !== null && String(v).trim() !== '' && !String(v).includes('FILL-IN');
-const catsOf = (p: any): string[] => String(p.category || '').split(',').map((c) => c.trim()).filter(Boolean);
 const descOf = (p: any) => (p.description && String(p.description).trim() ? p.description : FALLBACK_DESCRIPTION);
 export default function Home() {
   useCustomerOnly();
   const [s, setS] = useState<any>(seedSettings);
   const [isAdmin, setIsAdmin] = useState(false);
   const [q, setQ] = useState('');
-  const [cat, setCat] = useState('All');
+  const [trail, setTrail] = useState<string[]>([]);
   const [ann, setAnn] = useState('');
   const [minP, setMinP] = useState(''); const [maxP, setMaxP] = useState('');
   const [sort, setSort] = useState('newest');
@@ -25,6 +27,10 @@ export default function Home() {
       }
     } catch { /* keep seed defaults from Settings */ }
     checkAdmin().then((r: any) => setIsAdmin(!!r.ok)).catch(() => {});
+    setTrail(readTrail());
+    const syncCat = () => { setTrail(readTrail()); document.getElementById('shop')?.scrollIntoView(); };
+    window.addEventListener(CAT_EVENT, syncCat);
+    return () => window.removeEventListener(CAT_EVENT, syncCat);
   }, []);
   const waNumber = String((s as any).whatsapp || (s.bankDetails as any)?.phone || '').replace(/\D/g, '');
   const showFee = Number(s.freeHoldDays) > 0 && Number(s.globalDailyFee) > 0;
@@ -34,11 +40,16 @@ export default function Home() {
     !showNote && 'pickup note',
     !waNumber && 'WhatsApp number',
   ].filter(Boolean) as string[];
-  const allCats: string[] = [...new Set((seedProducts as any[]).flatMap(catsOf))];
+  const roots = buildTree(seedProducts as any[]);
+  const matchTrail = (p: any) => {
+    if (!trail.length) return true;
+    const segs = pathOf(p).map(normCat);
+    return trail.every((k, i) => segs[i] === k);
+  };
   const needle = q.trim().toLowerCase();
   const base = (seedProducts as any[]).filter((p) =>
-    (cat === 'All' || catsOf(p).includes(cat)) &&
-    (!needle || p.name.toLowerCase().includes(needle) || descOf(p).toLowerCase().includes(needle) || catsOf(p).join(' ').toLowerCase().includes(needle)) &&
+    matchTrail(p) &&
+    (!needle || p.name.toLowerCase().includes(needle) || descOf(p).toLowerCase().includes(needle) || pathOf(p).join(' ').toLowerCase().includes(needle)) &&
     (!minP || Math.min(...p.variants.map((v: any) => v.price)) >= Number(minP)) &&
     (!maxP || Math.min(...p.variants.map((v: any) => v.price)) <= Number(maxP)));
   const avail = (p: any) => p.variants.some((v: any) => v.available > 0);
@@ -52,14 +63,15 @@ export default function Home() {
     return 0;
   };
   const featured = [...inStock, ...soldOut].sort(sortFn);
-  const fresh = (seedProducts as any[]).filter((p) => (isNew(p, 7) || isRestocked(p, 2)) && (cat === 'All' || catsOf(p).includes(cat)));
+  const fresh = (seedProducts as any[]).filter((p) => (isNew(p, 7) || isRestocked(p, 2)) && matchTrail(p));
   return (<div>
     {ann ? <div className="card"><b>{ann}</b></div> : null}
     <div className="hero"><h1>Something for every day.</h1><p>Skin, home, school and style. Pay by transfer, pick up or get delivery.</p><a className="btn hero-btn" href="#shop" style={{ textDecoration: 'none' }}>Shop now</a></div>
     <div className="searchbar"><span aria-hidden="true">🔍</span><input placeholder="Search products…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} /><button className="btn-s" onClick={() => document.getElementById('shop')?.scrollIntoView()} aria-label="Search">Go</button></div>
     <div style={{ display: 'flex', gap: 8 }}><input type="number" placeholder="Min ₦" value={minP} onChange={(e) => setMinP(e.target.value)} /><input type="number" placeholder="Max ₦" value={maxP} onChange={(e) => setMaxP(e.target.value)} /><select value={sort} onChange={(e) => setSort(e.target.value)}><option value="newest">Newest</option><option value="low-high">Price low–high</option><option value="high-low">Price high–low</option></select></div>
     <h2 id="categories">Categories</h2>
-    <div className="catchips">{['All', ...allCats].map((c) => <button key={c} className={cat === c ? 'on' : ''} onClick={() => setCat(c)}>{c}</button>)}</div>
+    <div className="catchips">{[{ key: '', name: 'All' }, ...roots].map((c) => <button key={c.key || 'all'} className={(c.key === '' ? trail.length === 0 : trail[0] === c.key) ? 'on' : ''} onClick={() => pickCategory(c.key ? [c.key] : [])}>{c.name}</button>)}</div>
+    {trail.length > 0 && <div className="small" style={{ marginTop: 6 }}>Showing {trail.map(prettyCat).join(' › ')} <button className="btn-s" style={{ minHeight: 0, padding: '4px 10px' }} onClick={() => pickCategory([])}>Clear ✕</button></div>}
     <div className="steps">
       {[['1', 'Choose'], ['2', 'Transfer'], ['3', 'Upload receipt']].map(([n, t]) => <div key={n} className="step"><b>{n}</b><span>{t}</span></div>)}
     </div>
@@ -98,8 +110,10 @@ function ProductCard({ p }: { p: any }) {
   const multi = p.variants.length > 1 && dims.length > 0;
   const [open, setOpen] = useState(false);
   const [sel, setSel] = useState<Record<string, string>>(() => Object.fromEntries(dims.map((d) => [d, p.variants[0].attrs[d]])));
-  const [gift, setGift] = useState(false);
+  const [addons, setAddons] = useState<any[] | null>(null);
+  const [addonIds, setAddonIds] = useState<number[]>([]);
   const [added, setAdded] = useState(false);
+  const idx = (seedProducts as any[]).indexOf(p);
   const [wished, setWished] = useState(() => {
     try { return (JSON.parse(localStorage.getItem('lakky-wishlist') || '[]') as string[]).includes(p.name); } catch { return false; }
   });
@@ -118,29 +132,48 @@ function ProductCard({ p }: { p: any }) {
     : p.variants[0];
   const lowStock = Math.min(...p.variants.map((v: any) => v.available));
   const showFew = p.lowStockThreshold !== undefined && p.lowStockThreshold !== null && lowStock <= p.lowStockThreshold;
+  // Add-ons this product really has (set by the owner per product). Loaded only
+  // when the customer opens the options — unticked means not in the order.
+  const loadAddons = async () => {
+    if (addons !== null) return;
+    const r: any = await listAddons({ productName: p.name }).catch(() => null);
+    setAddons(r && r.ok ? r.rows : []);
+  };
+  const pickedAddons = (addons || []).filter((a: any) => addonIds.includes(a.id));
+  const addonsTotal = pickedAddons.reduce((s: number, a: any) => s + Number(a.price), 0);
   const add = (v: any) => {
     if (!v || v.available <= 0) return;
     let cart: any[] = [];
     try { cart = JSON.parse(localStorage.getItem('lakky-cart') || '[]'); } catch { cart = []; }
     const label = dims.map((d) => v.attrs[d]).join(' / ');
-    const key = `${p.name}|${label}|${gift ? 'gift' : 'no'}`;
+    const addonList = pickedAddons.map((a: any) => ({ name: a.name, price: Number(a.price) }));
+    const key = `${p.name}|${label}|${addonList.map((a: any) => a.name).sort().join('+') || 'no'}`;
     const ex = cart.find((c) => c.key === key);
     if (ex) ex.qty += 1;
-    else cart.push({ key, name: p.name, attrs: v.attrs, colour: v.attrs.colour, size: v.attrs.size, price: v.price, addon: gift ? seedAddons[0] : null, qty: 1 });
+    else cart.push({ key, name: p.name, attrs: v.attrs, colour: v.attrs.colour, size: v.attrs.size, price: v.price, addons: addonList, qty: 1 });
     localStorage.setItem('lakky-cart', JSON.stringify(cart));
     window.dispatchEvent(new Event('lakky-cart-updated'));
     setAdded(true);
     setTimeout(() => setAdded(false), 2000);
   };
+  const addonBox = (
+    <div style={{ marginTop: 8 }}>
+      {(addons || []).map((a: any) => (
+        <div key={a.id}><label><input type="checkbox" checked={addonIds.includes(a.id)} onChange={(e) => setAddonIds((s) => (e.target.checked ? [...s, a.id] : s.filter((x) => x !== a.id)))} /> {a.name} +₦{Number(a.price).toLocaleString()}{Number(a.stock) <= 0 ? ' — Unavailable' : ''}</label></div>
+      ))}
+      {addons !== null && addons.length === 0 && <div className="small">No add-ons for this item.</div>}
+    </div>
+  );
   return (<div className="prod-card" style={soldOutCard ? { opacity: 0.65 } : undefined}>
-    <ProductImage p={p} />
+    <a href={'/p/' + idx} style={{ textDecoration: 'none', color: 'inherit' }}><ProductImage p={p} /></a>
     <div>{isNew(p, 7) ? <span className="badge badge-new">New</span> : null}{isRestocked(p, 2) ? <span className="badge">Restocked</span> : null}{showFew ? <span className="badge badge-sale">Few pieces left</span> : null}{soldOutCard ? <span className="badge badge-mut">Sold out</span> : null}</div>
-    <div className="prod-name">{p.name} <button onClick={wish} aria-label="Save to wishlist" style={{ background: 'none', border: 0, fontSize: 18, cursor: 'pointer' }}>{wished ? '❤️' : '🤍'}</button></div>
+    <div className="prod-name"><a href={'/p/' + idx} style={{ textDecoration: 'none', color: 'inherit' }}>{p.name}</a></div>
     {deal
-      ? <div><span style={{ textDecoration: 'line-through' }} className="small">₦{from.toLocaleString()}</span> <span className="prod-price">₦{deal.price.toLocaleString()}</span> <span className="badge badge-sale">{deal.label}</span></div>
-      : <div className="prod-price">{multi ? `from ₦${from.toLocaleString()}` : `₦${from.toLocaleString()}`}</div>}
-    {!multi && <div style={{ marginTop: 6 }}>{logged ? <button className="btn" style={{ width: '100%' }} disabled={match.available <= 0} onClick={() => add(match)}>{added ? 'Added ✓' : 'Add to Cart'}</button> : <a className="btn-s" href="/login" style={{ textDecoration: 'none' }}>Log in to buy</a>}</div>}
-    {multi && logged && <button className="btn-s" style={{ width: '100%', marginTop: 6 }} onClick={() => setOpen(!open)}>{open ? 'Hide options' : 'Choose options'}</button>}
+      ? <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><div><span style={{ textDecoration: 'line-through' }} className="small">₦{from.toLocaleString()}</span> <span className="prod-price">₦{deal.price.toLocaleString()}</span> <span className="badge badge-sale">{deal.label}</span></div><button onClick={wish} aria-label="Save to wishlist" style={{ background: 'none', border: 0, fontSize: 20, cursor: 'pointer' }}>{wished ? '❤️' : '🤍'}</button></div>
+      : <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span className="prod-price">{multi ? `from ₦${from.toLocaleString()}` : `₦${from.toLocaleString()}`}</span><button onClick={wish} aria-label="Save to wishlist" style={{ background: 'none', border: 0, fontSize: 20, cursor: 'pointer' }}>{wished ? '❤️' : '🤍'}</button></div>}
+    {!multi && <div style={{ marginTop: 6 }}>{logged ? <button className="btn" style={{ width: '100%' }} disabled={match.available <= 0} onClick={() => add(match)}>{added ? 'Added ✓' : addonsTotal > 0 ? `Add to Cart ₦${(match.price + addonsTotal).toLocaleString()}` : 'Add to Cart'}</button> : <a className="btn-s" href="/login" style={{ textDecoration: 'none' }}>Log in to buy</a>}</div>}
+    {!multi && <div style={{ marginTop: 6 }}><button className="btn-s" style={{ width: '100%' }} onClick={() => { setOpen(!open); loadAddons(); }}>{open ? 'Hide add-ons' : 'Add-ons'}</button>{open && addonBox}</div>}
+    {multi && logged && <button className="btn-s" style={{ width: '100%', marginTop: 6 }} onClick={() => { setOpen(!open); loadAddons(); }}>{open ? 'Hide options' : 'Choose options'}</button>}
     {multi && !logged && <div style={{ marginTop: 6 }}><a className="btn-s" href="/login" style={{ textDecoration: 'none' }}>Log in to buy</a></div>}
     {multi && open && (<div style={{ marginTop: 8 }}>
       {dims.map((d) => {
@@ -151,8 +184,8 @@ function ProductCard({ p }: { p: any }) {
           return <button key={o} disabled={off} onClick={() => setSel((s) => ({ ...s, [d]: o }))} style={{ margin: 4, border: sel[d] === o ? '2px solid #5A2948' : '1px solid #EBDDD2', borderRadius: 8, padding: '6px 10px', opacity: off ? 0.4 : 1, background: '#fff' }}>{o}{off ? ' — sold out' : ''}</button>;
         })}</div></div>);
       })}
-      <div><b>{match && match.available > 0 ? `₦${match.price.toLocaleString()}` : 'Not available in this combination'}</b></div>
-      <div><label><input type="checkbox" checked={gift} onChange={(e) => setGift(e.target.checked)} /> Gift box +₦{seedAddons[0].price.toLocaleString()}</label></div>
+      <div><b>{match && match.available > 0 ? `₦${(match.price + addonsTotal).toLocaleString()}` : 'Not available in this combination'}</b></div>
+      {addonBox}
       <button className="btn" style={{ width: '100%' }} disabled={!match || match.available <= 0} onClick={() => add(match)}>{added ? 'Added ✓' : 'Add to Cart'}</button>
     </div>)}
   </div>);

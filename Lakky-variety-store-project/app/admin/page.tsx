@@ -34,11 +34,11 @@ export default function AdminDash() {
   const [popReason, setPopReason] = useState('Underpayment');
   const [bulkMsg, setBulkMsg] = useState('');
   const bulkApply = async () => {
-    const refs = sel.map((id) => { const it = items.find((x) => x.id === id); return it ? (it.referenceId || it.ref) : null; }).filter(Boolean) as string[];
+    const refs = sel.map((id) => { const it = items.find((x) => x.id === id); return it ? (it.displayId || it.ref) : null; }).filter(Boolean) as string[];
     let ok = 0, fail = 0;
     if (bulkAsk.startsWith('Confirm')) {
       for (const ref of refs) {
-        const it = items.find((x) => (x.referenceId || x.ref) === ref);
+        const it = items.find((x) => (x.displayId || x.ref) === ref);
         const r: any = await confirmOrder({ pendingRef: ref, verifiedAmount: Number(it.submitted || 0), seenBank: true }).catch(() => null);
         if (r && r.ok) ok++; else fail++;
       }
@@ -89,11 +89,11 @@ export default function AdminDash() {
   const under = items.filter((o) => o.status !== 'pending');
   const week = confirmed.filter((o) => Date.now() - new Date(o.at || Date.now()).getTime() < 7 * 86400000);
   const received = week.reduce((s, o) => s + Number(o.total || 0), 0);
-  const rows = tab === 'review' ? review : tab === 'under' ? under : tab === 'confirmed' ? confirmed : tab === 'ready' ? confirmed.filter((o) => o.st === 'ready' || o.st === 'onway') : confirmed.filter((o) => o.st === 'rejected' || o.st === 'cancelled');
+  const rows = tab === 'review' ? review : tab === 'under' ? under : tab === 'completed' ? confirmed.filter((o) => o.st === 'completed') : tab === 'confirmed' ? confirmed.filter((o) => o.st !== 'completed') : tab === 'ready' ? confirmed.filter((o) => o.st === 'ready' || o.st === 'onway') : confirmed.filter((o) => o.st === 'rejected' || o.st === 'cancelled');
   const quick = async () => {
     if (!pop) return;
     if (pop.mode === 'confirm') {
-      const it = items.find((x) => (x.referenceId || x.ref) === pop.ref);
+      const it = items.find((x) => (x.displayId || x.ref) === pop.ref);
       if (!it || Number(it.submitted || 0) < Number(it.total || 0)) { setPopMsg('Underpaid — open the order instead.'); return; }
       const r: any = await confirmOrder({ pendingRef: pop.ref, verifiedAmount: Number(it.submitted), seenBank: true }).catch(() => null);
       if (r && r.ok) { setPop(null); load(); } else setPopMsg('Not saved — ' + ((r && r.reason) || 'try again') + '. Nothing changed.');
@@ -103,8 +103,8 @@ export default function AdminDash() {
     }
   };
   return (<AdminShell><h2>Orders</h2>
-    <div className="searchbar"><span aria-hidden="true">🔍</span><input placeholder="Ref, name, phone or last 4…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') search(); }} /><button className="btn-s" onClick={search}>Go</button></div>
-    {found.length > 0 && <div className="card">{found.map((o) => <div key={o.id} className="small"><a href={`/admin/orders/${o.referenceId || o.displayId}`}>{o.displayId}</a> • {o.name} • {o.phone} • {o.pay} • {o.st}</div>)}</div>}
+    <div className="searchbar"><span aria-hidden="true">🔍</span><input placeholder="Order ID, name, phone or last 4…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') search(); }} /><button className="btn-s" onClick={search}>Go</button></div>
+    {found.length > 0 && <div className="card">{found.map((o) => <div key={o.id} className="small"><a href={`/admin/orders/${o.displayId}`}>{o.displayId}</a> • {o.name} • {o.phone} • {o.pay} • {o.st}</div>)}</div>}
     <div className="sumgrid">
       <div className="sumcard"><div className="t">TO REVIEW</div><div className="n" style={{ color: '#B7791F' }}>{review.length}</div></div>
       <div className="sumcard"><div className="t">UNDERPAID</div><div className="n" style={{ color: 'var(--red)' }}>{under.length}</div></div>
@@ -112,20 +112,20 @@ export default function AdminDash() {
       <div className="sumcard"><div className="t">RECEIVED THIS WEEK</div><div className="n">₦{received.toLocaleString()}</div></div>
     </div>
     <div className="catchips" style={{ marginTop: 10 }}>
-      {[['review', `To review (${review.length})`], ['under', `Underpaid (${under.length})`], ['confirmed', 'Confirmed'], ['ready', 'Ready'], ['rejected', 'Rejected']].map(([t, label]) => <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{label}</button>)}
+      {[['review', `To review (${review.length})`], ['under', `Underpaid (${under.length})`], ['confirmed', 'Confirmed'], ['ready', 'Ready'], ['completed', 'Completed'], ['rejected', 'Rejected']].map(([t, label]) => <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{label}</button>)}
     </div>
     <div className="tablewrap"><table>
-      <thead><tr><th></th><th>REF</th><th>CUSTOMER</th><th>SUBMITTED</th><th>EXPECTED</th><th>CLAIMED</th><th>RECEIPT</th><th>STATUS</th><th></th></tr></thead>
+      <thead><tr><th></th><th>ORDER ID</th><th>CUSTOMER</th><th>SUBMITTED</th><th>EXPECTED</th><th>CLAIMED</th><th>RECEIPT</th><th>STATUS</th><th></th></tr></thead>
       <tbody>{rows.map((o) => <tr key={o.id || o.displayId}>
         <td data-th="Pick"><input type="checkbox" checked={sel.includes(o.id)} onChange={() => toggle(o.id)} /></td>
-        <td data-th="Ref"><b>{o.referenceId || o.ref || o.displayId}</b></td>
+        <td data-th="Order ID"><b style={{ overflowWrap: 'anywhere' }}>{o.displayId || o.ref}</b>{Number(o.unread || 0) > 0 && <div><span className="badge badge-err">💬 New message{Number(o.unread) > 1 ? ` (${o.unread})` : ''}</span></div>}</td>
         <td data-th="Customer">{o.name}<br /><span className="mask">{mask(o.phone)}</span>{o.method ? ` · ${o.method}` : ''}</td>
         <td data-th="Submitted">{o.at ? ago(o.at) : '—'}</td>
         <td data-th="Expected">₦{Number(o.total).toLocaleString()}</td>
         <td data-th="Claimed" style={Number(o.submitted || o.paid || 0) < Number(o.total) ? { color: 'var(--red)', fontWeight: 700 } : undefined}>₦{Number(o.submitted || o.paid || 0).toLocaleString()}</td>
         <td data-th="Receipt">{o.hasReceipt ? '🧾 Yes' : '—'}</td>
         <td data-th="Status"><span className="badge">{o.status || o.st}</span></td>
-        <td data-th="Open"><a className="btn" style={{ textDecoration: 'none', padding: '8px 14px', minHeight: 0 }} href={`/admin/orders/${o.referenceId || o.ref || o.displayId}`}>Review</a> <button className="btn-s" onClick={() => { setPop({ mode: 'confirm', ref: o.referenceId || o.ref }); setPopMsg(''); }}>✓</button> <button className="btn-d" onClick={() => { setPop({ mode: 'reject', ref: o.referenceId || o.ref }); setPopMsg(''); }}>✕</button></td>
+        <td data-th="Open"><a className="btn" style={{ textDecoration: 'none', padding: '8px 14px', minHeight: 0 }} href={`/admin/orders/${o.displayId || o.ref}`}>Review</a> <button className="btn-s" onClick={() => { setPop({ mode: 'confirm', ref: o.displayId || o.ref }); setPopMsg(''); }}>✓</button> <button className="btn-d" onClick={() => { setPop({ mode: 'reject', ref: o.displayId || o.ref }); setPopMsg(''); }}>✕</button></td>
       </tr>)}</tbody>
     </table></div>
     {rows.length === 0 && <div className="empty">Nothing here.</div>}

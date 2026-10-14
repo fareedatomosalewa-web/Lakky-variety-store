@@ -1,7 +1,9 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { seedProducts } from '../../db/seed';
+import { useCustomerOnly } from '../../lib/use-customer-only';
 export default function WishlistPage() {
+  useCustomerOnly();
   const [names, setNames] = useState<string[]>([]);
   useEffect(() => {
     try { setNames(JSON.parse(localStorage.getItem('lakky-wishlist') || '[]')); } catch { setNames([]); }

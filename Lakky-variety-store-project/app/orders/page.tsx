@@ -2,93 +2,130 @@
 import { useState } from 'react';
 import { trackOrder } from '../../lib/shop-actions';
 import { useCustomerOnly } from '../../lib/use-customer-only';
+import { pushNotice } from '../../lib/harden';
 import { cancelOrder, getMessages, postMessage, requestMoney, setProgress, addReview, reportProblem } from '../../lib/shop-v1';
 const STEP_LABEL: Record<string, string> = { pending: 'Waiting for confirmation', processing: 'Confirmed', packaged: 'Being packed', ready: 'Ready for pickup', onway: 'On the way', completed: 'Completed', cancelled: 'Cancelled', 'cancel-requested': 'Cancellation requested' };
 const stepName = (s: string) => STEP_LABEL[s] || s;
+
+// Owner timeline: Order placed → Receipt received → Payment confirmed →
+// Ready for pickup → Collected. Done = green, current = highlighted, rest = gray.
+export function posFor(fulfilment: string): number {
+  if (fulfilment === 'completed') return 4;
+  if (fulfilment === 'ready' || fulfilment === 'onway') return 3;
+  return 2;
+}
+export function TimelineSteps({ fulfilment, confirmedAt, hasReceipt, compact }: { fulfilment: string; confirmedAt?: string; hasReceipt?: boolean; compact?: boolean }) {
+  const pos = posFor(fulfilment);
+  const titles = ['Order placed', 'Receipt received', 'Payment confirmed', 'Ready for pickup', 'Collected'];
+  const subs = [
+    '',
+    hasReceipt === false ? 'Not yet' : '',
+    confirmedAt ? new Date(confirmedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '',
+    pos === 2 ? 'We’ll message you in the app' : '',
+    '',
+  ];
+  return (<div className="timeline" style={{ marginTop: 8 }}>
+    {titles.map((t, i) => {
+      const state = fulfilment === 'completed' || i < pos ? 'done' : i === pos ? 'now' : 'todo';
+      return (
+        <div key={t} style={{ display: 'flex', gap: 10, padding: '7px 0', opacity: state === 'todo' ? 0.55 : 1 }}>
+          <span style={{
+            width: 26, height: 26, borderRadius: '50%', display: 'inline-block', textAlign: 'center', lineHeight: '26px',
+            background: state === 'done' ? '#47745A' : state === 'now' ? '#5A2948' : '#fff',
+            border: state === 'todo' ? '2px solid #CFC4BC' : 'none',
+            color: state === 'todo' ? '#756B68' : '#fff', fontWeight: 700, fontSize: 14,
+          }}>{state === 'done' ? '✓' : state === 'now' ? (i + 1) : (i + 1)}</span>
+          <div><b>{t}</b>{!compact && subs[i] ? <div className="small">{subs[i]}</div> : null}</div>
+        </div>
+      );
+    })}
+  </div>);
+}
 const CANCEL_REASONS = ['Price too high', 'No longer interested', 'Found it elsewhere', 'Ordered by mistake', 'Other'];
 
 function TimelineCard({ o }: { o: any }) {
-  const order = ['processing', 'packaged', 'onway_ready', 'completed'];
-  const f = o.fulfilment === 'ready' || o.fulfilment === 'onway' ? 'onway_ready' : o.fulfilment;
-  const idx = (s: string) => order.indexOf(s);
-  const at = Math.max(0, idx(f));
-  const dot = (s: string) => {
-    const mine = idx(s), state = mine < at || f === 'completed' ? 'done' : mine === at ? 'now' : 'todo';
-    return (
-      <span style={{
-        width: 26, height: 26, borderRadius: '50%', display: 'inline-block', textAlign: 'center', lineHeight: '26px',
-        background: state === 'done' ? '#47745A' : state === 'now' ? '#5A2948' : '#fff',
-        border: state === 'todo' ? '2px solid #EBDDD2' : 'none',
-        color: '#fff', fontWeight: 700, fontSize: 14,
-      }}>{state === 'done' ? '✓' : ''}</span>
-    );
-  };
-  const step = (s: string, title: string, sub: string) => {
-    const mine = idx(s), on = mine <= at;
-    return (
-      <div style={{ display: 'flex', gap: 10, padding: '7px 0', opacity: on ? 1 : 0.55 }}>
-        <div>{dot(s)}</div>
-        <div><b>{title}</b><div className="small">{sub}</div></div>
-      </div>
-    );
-  };
   const freeDate = o.freeUntil ? new Date(o.freeUntil + 'T12:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
-  const lastIsDelivery = o.fulfilment === 'onway';
+  const isStockpile = (o.method || '') === 'Stockpile';
   return (<div className="card">
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-      <h2 style={{ margin: 0 }}>{o.displayId}</h2>
-      <span className={f === 'completed' ? 'badge badge-ok' : 'badge'}>{stepName(o.fulfilment)}</span>
+      <h2 style={{ margin: 0, overflowWrap: 'anywhere' }}>{o.displayId}</h2>
+      <span className={o.fulfilment === 'completed' ? 'badge badge-ok' : 'badge'}>{stepName(o.fulfilment)}</span>
     </div>
-    <div className="small">Ref {o.ref || ''} • ₦{Number(o.paid).toLocaleString()} paid</div>
-    <div className="timeline" style={{ marginTop: 8 }}>
-      {step('processing', 'Order placed', o.confirmedAt ? new Date(o.confirmedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '')}
-      {step('packaged', 'Receipt received', '')}
-      {step('processing', 'Payment confirmed', '')}
-      {step('onway_ready', lastIsDelivery ? 'On the way' : 'Ready for pickup', at >= 2 && at < 3 ? 'We’ll message you in the app' : '')}
-      {step('completed', 'Collected', '')}
-    </div>
-    {freeDate && (<div className="notice-ok">🕒 Free hold until <b>{freeDate}</b>{Number(o.extraDays) > 0 ? ` (${o.extraDays} days over)` : ''}. After that ₦{Number(o.rate).toLocaleString()}/day.</div>)}
+    <div className="small">₦{Number(o.paid).toLocaleString()} paid of ₦{Number(o.total).toLocaleString()}</div>
+    <TimelineSteps fulfilment={o.fulfilment} confirmedAt={o.confirmedAt} hasReceipt={o.hasReceipt} />
+    {isStockpile && freeDate && (<div className="notice-ok" style={{ overflowWrap: 'anywhere', whiteSpace: 'normal', wordBreak: 'break-word' }}>🕒 Free hold until <b>{freeDate}</b>, then ₦{Number(o.rate).toLocaleString()}/day{Number(o.extraDays) > 0 ? ` (${o.extraDays} days over)` : ''}.</div>)}
   </div>);
+}
+
+function WaitingCard({ p }: { p: any }) {
+  return (<div className="card">
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <h2 style={{ margin: 0, overflowWrap: 'anywhere' }}>{p.displayId}</h2>
+      <span className="badge">Waiting</span>
+    </div>
+    <div style={{ marginTop: 8 }}>Your order is waiting for payment confirmation. Tracking opens as soon as we confirm your payment, and we’ll notify you.</div>
+    {p.notice ? <div className="small" style={{ marginTop: 8 }}>Message from shop: {p.notice}</div> : null}
+  </div>);
+}
+
+function seenKey(id: string | number) { return `lakky-seen-${id}`; }
+function flagNewOwnerMsgs(thread: string | number, messages: any[], orderLabel: string) {
+  try {
+    const seen = Number(localStorage.getItem(seenKey(thread)) || '0');
+    const owners = messages.filter((m) => m.sender === 'owner');
+    if (owners.length > seen) {
+      pushNotice('message', `New message from the shop on ${orderLabel}: ${owners[owners.length - 1].text.slice(0, 120)}`);
+      localStorage.setItem(seenKey(thread), String(owners.length));
+    }
+  } catch { /* notices best-effort */ }
 }
 export default function OrdersPage() {
   useCustomerOnly();
   const [orderId, setOrderId] = useState(''); const [phone, setPhone] = useState(''); const [res, setRes] = useState('');
   const [o, setO] = useState<any>(null);
+  const [pend, setPend] = useState<any>(null);
   const [msgs, setMsgs] = useState<any[]>([]);
+  const [pendMsgs, setPendMsgs] = useState<any[]>([]);
   const [draft, setDraft] = useState('');
+  const [pendDraft, setPendDraft] = useState('');
   const [reason, setReason] = useState(CANCEL_REASONS[0]); const [note, setNote] = useState('');
   const [stars, setStars] = useState(5); const [revNote, setRevNote] = useState('');
   const [prob, setProb] = useState('');
   const [bank, setBank] = useState({ name: '', number: '', account: '' });
-  const loadMsgs = async (id: number) => { const r: any = await getMessages({ orderId: id }).catch(() => null); if (r && r.ok) setMsgs(r.messages); };
+  const loadMsgs = async (id: number, label: string) => { const r: any = await getMessages({ orderId: id }).catch(() => null); if (r && r.ok) { setMsgs(r.messages); flagNewOwnerMsgs(`order-${id}`, r.messages, label); } };
+  const loadPendMsgs = async (pendingId: number, label: string) => { const r: any = await getMessages({ pendingId }).catch(() => null); if (r && r.ok) { setPendMsgs(r.messages); flagNewOwnerMsgs(`pending-${pendingId}`, r.messages, label); } };
   const lookup = async () => {
     if (!orderId || !phone) { setRes('Both Order ID and matching phone are required. Phone alone cannot retrieve.'); return; }
-    setO(null);
+    setO(null); setPend(null); setPendMsgs([]);
     try {
       const r: any = await trackOrder({ displayId: orderId, phone });
       if (r.ok && r.order) {
         setO({ ...r.order, phone });
         const oo = r.order;
-        setRes(`Found ${oo.displayId} — ${oo.status} — now: ${stepName(oo.fulfilment)} — paid ₦${Number(oo.paid).toLocaleString()} of ₦${Number(oo.total).toLocaleString()} — free until ${oo.freeUntil} — fee ₦${Number(oo.fee).toLocaleString()} (${oo.extraDays} days × ₦${Number(oo.rate).toLocaleString()}).`);
-        loadMsgs(oo.id);
+        const feeBit = (oo.method || '') === 'Stockpile' ? ` — free until ${oo.freeUntil} — fee ₦${Number(oo.fee).toLocaleString()} (${oo.extraDays} days × ₦${Number(oo.rate).toLocaleString()}).` : '';
+        setRes(`Found ${oo.displayId} — ${oo.status} — now: ${stepName(oo.fulfilment)} — paid ₦${Number(oo.paid).toLocaleString()} of ₦${Number(oo.total).toLocaleString()}.${feeBit}`);
+        loadMsgs(oo.id, oo.displayId);
         return;
       }
       if (r.ok && (r as any).pending) {
         const p = r as any;
-        const stageText = p.stage === 'checking' ? 'Payment being checked — we will confirm once the money shows in our bank.'
-          : p.stage === 'underpayment' ? 'Underpaid — please pay the rest.'
-          : p.stage === 'rejected' ? 'Not accepted — see below.'
-          : 'Confirmed — your Order ID is on its way.';
-        setRes(`${p.ref} — ${stageText} (Expected ₦${Number(p.total).toLocaleString()}).${p.notice ? ` Message from shop: ${p.notice}` : ''}`);
+        setPend({ ...p, phone });
+        setRes(`${p.displayId} — waiting for payment confirmation (Expected ₦${Number(p.total).toLocaleString()}).${p.notice ? ` Message from shop: ${p.notice}` : ''}`);
+        loadPendMsgs(p.pendingId, p.displayId);
         return;
       }
     } catch { /* fall through to not-found */ }
-    setRes('No match. Check the code + phone. Use your Reference ID (REF-…) before confirm, Order ID after.');
+    setRes('No match. Check your Order ID + the phone you used at checkout.');
   };
   const send = async () => {
     if (!draft.trim() || !o) return;
     await postMessage({ orderId: o.id, sender: 'customer', text: draft }).catch(() => null);
-    setDraft(''); loadMsgs(o.id);
+    setDraft(''); loadMsgs(o.id, o.displayId);
+  };
+  const sendPend = async () => {
+    if (!pendDraft.trim() || !pend) return;
+    await postMessage({ pendingId: pend.pendingId, sender: 'customer', text: pendDraft }).catch(() => null);
+    setPendDraft(''); loadPendMsgs(pend.pendingId, pend.displayId);
   };
   const cancel = async () => {
     if (!o) return;
@@ -117,9 +154,15 @@ export default function OrdersPage() {
     setProb(''); alert('Problem sent. The owner will review it.');
   };
   return (<div><div className="card"><h2>Track order</h2>
-    <input placeholder="Reference ID or Order ID" value={orderId} onChange={e=>setOrderId(e.target.value)} />
+    <input placeholder="Order ID (e.g. LVS-001-2345)" value={orderId} onChange={e=>setOrderId(e.target.value)} />
     <input placeholder="Phone used at checkout" value={phone} onChange={e=>setPhone(e.target.value)} />
     <button className="btn" style={{ width: '100%' }} onClick={lookup}>Track</button><div>{res}</div></div>
+    {pend && !o && (<WaitingCard p={pend} />)}
+    {pend && !o && (<div className="card"><h3>Messages about {pend.displayId}</h3>
+      {pendMsgs.length === 0 && <div className="small">No messages yet. Write to the shop here — we reply here too.</div>}
+      {pendMsgs.map((m, i) => <div key={i} className="small"><b>{m.sender}:</b> {m.text}</div>)}
+      <div style={{ display: 'flex', gap: 8 }}><input placeholder="Write to the shop…" value={pendDraft} onChange={(e) => setPendDraft(e.target.value)} /><button className="btn-s" onClick={sendPend}>Send</button></div>
+    </div>)}
     {o && o.id && (<TimelineCard o={o} />)}
     {o && o.id && (<div className="card"><h3>Messages about {o.displayId}</h3>
       {msgs.map((m, i) => <div key={i} className="small"><b>{m.sender}:</b> {m.text}</div>)}

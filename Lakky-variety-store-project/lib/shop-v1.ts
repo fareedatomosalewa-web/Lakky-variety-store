@@ -4,7 +4,7 @@
 // cancel, notifications, reviews, problems, wishlist, accounts, staff, exports.
 import postgres from 'postgres';
 import crypto from 'crypto';
-import { makeRef, stepLabel } from './pricing';
+import { stepLabel } from './pricing';
 
 function conn() {
   const url = process.env.DATABASE_URL || '';
@@ -53,23 +53,17 @@ function hashPw(pw: string, salt: string): string {
   return crypto.scryptSync(pw, salt, 64).toString('hex');
 }
 
-// ---- Reference ID: one short code per order, shown beside the account number ----
+// ---- Order ID lookup: one ID per order, given at submit (legacy: no new codes) ----
 export async function ensureReference(args: { pendingRef: string }) {
   try {
     const sql = conn();
-    const rows = await sql`select id, reference_id as "refId" from pending_refs where ref=${args.pendingRef} limit 1`;
+    const key = String(args.pendingRef || '').trim();
+    const rows = await sql`select id, display_id as "displayId" from pending_refs where ref=${key} or reference_id=${key} or display_id=${key} or display_id=${key.toUpperCase()} limit 1`;
     if (!rows.length) { await sql.end(); return { ok: false as const }; }
-    if (rows[0].refId) { await sql.end(); return { ok: true as const, referenceId: rows[0].refId }; }
-    for (let i = 0; i < 5; i++) {
-      const code = makeRef();
-      try {
-        await sql`update pending_refs set reference_id=${code} where id=${rows[0].id} and reference_id is null`;
-        await sql.end();
-        return { ok: true as const, referenceId: code };
-      } catch { /* collision: retry */ }
-    }
+    const displayId = rows[0].displayId as string | null;
     await sql.end();
-    return { ok: false as const };
+    if (!displayId) return { ok: false as const };
+    return { ok: true as const, referenceId: displayId, displayId };
   } catch { return { ok: false as const }; }
 }
 
@@ -79,7 +73,7 @@ export async function listConfirmed() {
     // ADMIN-GATED:listConfirmed
     if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
-    const rows = await sql`select o.id, o.display_id as "displayId", o.total, o.fulfilment_status as st, o.confirmed_at as "at", c.full_name as name, c.phone, (select reference_id from pending_refs p where p.id=o.pending_id) as "referenceId" from orders o left join customers c on c.id=o.customer_id order by o.id desc limit 100`;
+    const rows = await sql`select o.id, o.display_id as "displayId", o.total, o.fulfilment_status as st, o.confirmed_at as "at", c.full_name as name, c.phone, (select reference_id from pending_refs p where p.id=o.pending_id) as "referenceId", (select count(*)::int from order_messages m where m.order_id=o.id and m.sender='customer' and coalesce(m.seen_by_admin,false)=false) as "unread" from orders o left join customers c on c.id=o.customer_id order by o.id desc limit 100`;
     await sql.end();
     return { ok: true as const, rows };
   } catch { return { ok: false as const, rows: [] as any[] }; }
@@ -91,7 +85,7 @@ export async function listPending() {
     // ADMIN-GATED:listPending
     if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
-    const rows = await sql`select p.id, p.ref, p.reference_id as "referenceId", p.expected_total as total, p.status, p.created_at as "at", c.full_name as name, c.phone, (select max(amount_claimed) from payment_submissions s where s.pending_id=p.id) as submitted, exists(select 1 from payment_submissions s where s.pending_id=p.id and s.proof_url is not null and s.proof_url <> '') as "hasReceipt" from pending_refs p left join customers c on c.id=p.customer_id where p.status in ('pending','under') order by p.id desc limit 200`;
+    const rows = await sql`select p.id, p.ref, p.display_id as "displayId", p.reference_id as "referenceId", p.expected_total as total, p.status, p.created_at as "at", c.full_name as name, c.phone, (select max(amount_claimed) from payment_submissions s where s.pending_id=p.id) as submitted, exists(select 1 from payment_submissions s where s.pending_id=p.id and s.proof_url is not null and s.proof_url <> '') as "hasReceipt", (select count(*)::int from order_messages m where m.pending_id=p.id and m.sender='customer' and coalesce(m.seen_by_admin,false)=false) as "unread" from pending_refs p left join customers c on c.id=p.customer_id where p.status in ('pending','under') order by p.id desc limit 200`;
     await sql.end();
     return { ok: true as const, rows };
   } catch { return { ok: false as const, rows: [] as any[] }; }
@@ -113,13 +107,41 @@ export async function getPendingDetail(args: { ref: string }) {
     // ADMIN-GATED:getPendingDetail
     if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
-    const all = await sql`select p.*, c.full_name as name, c.phone from pending_refs p left join customers c on c.id=p.customer_id where p.ref=${args.ref} or p.reference_id=${args.ref} limit 2`;
+    const key = String(args.ref || '').trim();
+    const all = await sql`select p.*, c.full_name as name, c.phone from pending_refs p left join customers c on c.id=p.customer_id where p.ref=${key} or p.reference_id=${key} or p.display_id=${key} or p.display_id=${key.toUpperCase()} limit 2`;
     const pend = (all as any[])[0];
     if (!pend) { await sql.end(); return { ok: false as const }; }
     const items = await sql`select * from pending_items where pending_id=${pend.id}`;
     const subs = await sql`select * from payment_submissions where pending_id=${pend.id} order by id`;
+    // Figures for the Expected box: one number the owner should have received.
+    // Stockpile fee accrues itself after the free days (confirmed orders only).
+    let figures: any = null;
+    try {
+      const submittedTotal = (subs as any[]).reduce((s, x) => s + Number(x.amount_claimed || 0), 0);
+      const method = (pend.fulfilment as any)?.method || '';
+      const isStockpile = method === 'Stockpile';
+      const expectedTotal = Number(pend.expected_total || 0);
+      let freeUntil = '', extraDays = 0, rate = 0, feeAmount = 0;
+      const ord = await sql`select free_until as "freeUntil", fulfilment_method as method from orders where pending_id=${pend.id} order by id desc limit 1`.catch(() => []);
+      if (ord.length && isStockpile) {
+        freeUntil = ord[0].freeUntil ? String(ord[0].freeUntil).slice(0, 10) : '';
+        const st = await sql`select stockpile_fee_per_day as fee, global_daily_fee as glob from settings limit 1`.catch(() => []);
+        rate = Number(st.length ? (st[0].fee ?? st[0].glob ?? 0) : 0);
+        const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Lagos', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+        if (freeUntil && today > freeUntil && rate > 0) {
+          extraDays = Math.ceil((new Date(today + 'T12:00:00Z').getTime() - new Date(freeUntil + 'T12:00:00Z').getTime()) / 86400000);
+          feeAmount = extraDays * rate;
+        }
+      }
+      figures = {
+        expectedTotal, submittedTotal, method, isStockpile, freeUntil, extraDays, rate, feeAmount,
+        expectedWithFee: expectedTotal + feeAmount,
+        under: submittedTotal < expectedTotal,
+        over: submittedTotal > expectedTotal,
+      };
+    } catch { /* figures stay null */ }
     await sql.end();
-    return { ok: true as const, pending: pend, items, submissions: subs };
+    return { ok: true as const, pending: pend, items, submissions: subs, figures };
   } catch { return { ok: false as const }; }
 }
 const REJECT_OK = ['Underpayment', 'Fake receipt', 'Wrong order'];
@@ -128,12 +150,12 @@ export async function underPending(args: { ref: string; admin?: string }) {
     // ADMIN-GATED:underPending
     if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
-    const all = await sql`select * from pending_refs where (status='pending' or status='under') and (ref=${args.ref} or reference_id=${args.ref}) limit 2`;
+    const all = await sql`select * from pending_refs where (status='pending' or status='under') and (ref=${args.ref} or reference_id=${args.ref} or display_id=${args.ref} or display_id=${String(args.ref || '').trim().toUpperCase()}) limit 2`;
     const pend = (all as any[])[0];
     if (!pend) { await sql.end(); return { ok: false as const }; }
     await sql`update pending_refs set status='under' where id=${pend.id}`;
-    await sql`insert into notifications (customer_id, order_id, type, message) values (${pend.customer_id}, null, 'underpayment', ${'Order ' + pend.ref + ' needs a top-up.'})`;
-    await sql`insert into order_events (order_id, actor, action) values (null, ${args.admin || 'owner'}, ${'pending-under:' + pend.ref})`;
+    await sql`insert into notifications (customer_id, order_id, type, message) values (${pend.customer_id}, null, 'underpayment', ${'Order ' + (pend.display_id || pend.ref) + ' needs a top-up.'})`;
+    await sql`insert into order_events (order_id, actor, action) values (null, ${args.admin || 'owner'}, ${'pending-under:' + (pend.display_id || pend.ref)})`;
     await sql.end();
     return { ok: true as const };
   } catch { return { ok: false as const }; }
@@ -144,13 +166,13 @@ export async function rejectPending(args: { ref: string; reason: string; note?: 
     if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const reason = REJECT_OK.includes(args.reason) ? args.reason : 'Other';
-    const all = await sql`select * from pending_refs where (status='pending' or status='under') and (ref=${args.ref} or reference_id=${args.ref}) limit 2`;
+    const all = await sql`select * from pending_refs where (status='pending' or status='under') and (ref=${args.ref} or reference_id=${args.ref} or display_id=${args.ref} or display_id=${String(args.ref || '').trim().toUpperCase()}) limit 2`;
     const pend = (all as any[])[0];
     if (!pend) { await sql.end(); return { ok: false as const }; }
     await sql`update pending_refs set status='rejected' where id=${pend.id}`;
     await sql`insert into order_messages (order_id, pending_id, sender, text) values (null, ${pend.id}, 'owner', ${'Order not accepted: ' + reason + (args.note ? ' — ' + args.note : '')})`;
-    await sql`insert into notifications (customer_id, order_id, type, message) values (${pend.customer_id}, null, 'rejected', ${'Order ' + pend.ref + ' was not accepted: ' + reason})`;
-    await sql`insert into order_events (order_id, actor, action, note) values (null, ${args.admin || 'owner'}, 'pending-rejected', ${pend.ref + ': ' + reason})`;
+    await sql`insert into notifications (customer_id, order_id, type, message) values (${pend.customer_id}, null, 'rejected', ${'Order ' + (pend.display_id || pend.ref) + ' was not accepted: ' + reason})`;
+    await sql`insert into order_events (order_id, actor, action, note) values (null, ${args.admin || 'owner'}, 'pending-rejected', ${(pend.display_id || pend.ref) + ': ' + reason})`;
     await sql.end();
     return { ok: true as const };
   } catch { return { ok: false as const }; }
@@ -160,12 +182,12 @@ export async function markPartial(args: { ref: string; note: string; admin?: str
     // ADMIN-GATED:markPartial
     if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
-    const all = await sql`select * from pending_refs where (status='pending' or status='under') and (ref=${args.ref} or reference_id=${args.ref}) limit 2`;
+    const all = await sql`select * from pending_refs where (status='pending' or status='under') and (ref=${args.ref} or reference_id=${args.ref} or display_id=${args.ref} or display_id=${String(args.ref || '').trim().toUpperCase()}) limit 2`;
     const pend = (all as any[])[0];
     if (!pend) { await sql.end(); return { ok: false as const }; }
     await sql`update pending_refs set status='partial' where id=${pend.id}`;
     await sql`insert into order_messages (order_id, pending_id, sender, text) values (null, ${pend.id}, 'owner', ${'Partially accepted: ' + (args.note || '') + ' — reply: store credit, refund for missing items, or cancel all.'})`;
-    await sql`insert into notifications (customer_id, order_id, type, message) values (${pend.customer_id}, null, 'partial', ${'Order ' + pend.ref + ' partially accepted — open it to choose.'})`;
+    await sql`insert into notifications (customer_id, order_id, type, message) values (${pend.customer_id}, null, 'partial', ${'Order ' + (pend.display_id || pend.ref) + ' partially accepted — open it to choose.'})`;
     await sql.end();
     return { ok: true as const };
   } catch { return { ok: false as const }; }
@@ -212,11 +234,11 @@ export async function getOrderThread(args: { ref: string }) {
     if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     const key = String(args.ref || '').trim().toUpperCase();
-    const all = await sql`select id, display_id as "displayId", pending_id as "pendingId", fulfilment_status as st from orders where upper(display_id) = ${key} or upper(display_id) like ${'%' + key} order by id desc limit 5`;
+    const all = await sql`select id, display_id as "displayId", pending_id as "pendingId", fulfilment_status as st, confirmed_at as "at", fulfilment_method as method, free_until as "freeUntil" from orders where upper(display_id) = ${key} or upper(display_id) like ${'%' + key} order by id desc limit 5`;
     const hit = (all as any[])[0];
     let orderId: number | null = hit ? hit.id : null;
     if (!orderId) {
-      const p = await sql`select id from pending_refs where ref=${args.ref} or reference_id=${args.ref} limit 1`;
+      const p = await sql`select id from pending_refs where ref=${args.ref} or reference_id=${args.ref} or display_id=${args.ref} or display_id=${String(args.ref || '').trim().toUpperCase()} limit 1`;
       if (p.length) {
         const m = await sql`select id from orders where pending_id=${p[0].id} order by id desc limit 1`;
         if (m.length) orderId = m[0].id;
@@ -225,7 +247,15 @@ export async function getOrderThread(args: { ref: string }) {
     const messages = orderId ? await sql`select sender, text, created_at as "at" from order_messages where order_id=${orderId} order by id` : [];
     await sql.end();
     const stRow = orderId ? (all as any[]).find((o) => o.id === orderId) : null;
-    return { ok: true as const, orderId, messages, status: stRow ? stRow.st : null };
+    let timeline: any = null;
+    if (stRow) {
+      timeline = {
+        displayId: stRow.displayId, fulfilment: stRow.st,
+        confirmedAt: stRow.at, method: stRow.method || '',
+        freeUntil: stRow.freeUntil ? String(stRow.freeUntil).slice(0, 10) : '',
+      };
+    }
+    return { ok: true as const, orderId, pendingId: stRow ? stRow.pendingId : null, displayId: stRow ? stRow.displayId : null, messages, status: stRow ? stRow.st : null, timeline };
   } catch { return { ok: false as const, orderId: null, messages: [] as any[] }; }
 }
 
@@ -278,7 +308,7 @@ export async function customerSession(args: { token: string }) {
 
 // ---- one-tap progress with instant customer notice (labels live in ./pricing) ----
 const NEXT: Record<string, string[]> = {
-  processing: ['packaged'], packaged: ['ready', 'onway'],
+  processing: ['packaged', 'ready'], packaged: ['ready', 'onway', 'completed'],
   ready: ['completed'], onway: ['completed'],
 };
 export async function advanceOrder(args: { orderId: number; to: string; actor?: string }) {
@@ -323,13 +353,51 @@ export async function quoteWithCredit(args: { phone: string; total: number; coup
   } catch { return { ok: false as const }; }
 }
 
-// ---- order messages (simple per-order thread) ----
-export async function postMessage(args: { orderId: number; sender: string; text: string }) {
+// ---- order messages: two-way chat from the moment the order is submitted ----
+// Works before confirm (pending_id) and after (order_id). Owner replies notify
+// the customer in-app; customer messages are logged for the owner.
+export async function postMessage(args: { orderId?: number; pendingId?: number; sender: string; text: string }) {
   try {
     const sql = conn();
     const t = String(args.text || '').slice(0, 1000);
-    if (!args.orderId || !t.trim()) { await sql.end(); return { ok: false as const }; }
-    await sql`insert into order_messages (order_id, sender, text) values (${args.orderId}, ${args.sender}, ${t})`;
+    if ((!args.orderId && !args.pendingId) || !t.trim()) { await sql.end(); return { ok: false as const }; }
+    if (args.sender !== 'owner' && args.sender !== 'customer') { await sql.end(); return { ok: false as const }; }
+    await sql`insert into order_messages (order_id, pending_id, sender, text, seen_by_admin) values (${args.orderId || null}, ${args.pendingId || null}, ${args.sender}, ${t}, ${args.sender === 'owner'})`;
+    if (args.sender === 'owner') {
+      let cid: number | null = null;
+      let oid: number | null = args.orderId || null;
+      try {
+        if (args.orderId) {
+          const c = await sql`select customer_id as "cid" from orders where id=${args.orderId} limit 1`;
+          if (c.length) cid = c[0].cid;
+        } else if (args.pendingId) {
+          const c = await sql`select customer_id as "cid" from pending_refs where id=${args.pendingId} limit 1`;
+          if (c.length) cid = c[0].cid;
+          const o = await sql`select id from orders where pending_id=${args.pendingId} order by id desc limit 1`;
+          if (o.length) oid = o[0].id;
+        }
+      } catch { /* notify best-effort */ }
+      if (cid) {
+        const off = await sql`select id from notification_prefs where customer_id=${cid} and type='message' and off=true limit 1`.catch(() => []);
+        if (!off.length) await sql`insert into notifications (customer_id, order_id, type, message) values (${cid}, ${oid}, 'message', ${t.slice(0, 200)})`.catch(() => null);
+      }
+    } else {
+      const detail = args.orderId ? `order:${args.orderId}` : `pending:${args.pendingId}`;
+      await sql`insert into order_events (order_id, actor, action, note) values (${args.orderId || null}, 'customer', 'message', ${detail})`.catch(() => null);
+      // Buzz the owner's phone (works once push keys are added; silent before).
+      try {
+        let label = detail;
+        if (args.orderId) {
+          const o = await sql`select display_id as "d" from orders where id=${args.orderId} limit 1`.catch(() => []);
+          if (o.length && o[0].d) label = o[0].d;
+        } else if (args.pendingId) {
+          const pd = await sql`select display_id as "d" from pending_refs where id=${args.pendingId} limit 1`.catch(() => []);
+          if (pd.length && pd[0].d) label = pd[0].d;
+        }
+        const { sendAdminPush } = await import('./push');
+        await sendAdminPush({ title: 'New customer message', body: `${label}: ${t}`, url: `/admin/orders/${encodeURIComponent(label)}` });
+      } catch { /* push best-effort */ }
+    }
     await sql.end();
     return { ok: true as const };
   } catch { return { ok: false as const }; }
@@ -343,6 +411,40 @@ export async function getMessages(args: { orderId?: number; pendingId?: number }
     await sql.end();
     return { ok: true as const, messages: rows };
   } catch { return { ok: false as const, messages: [] as any[] }; }
+}
+
+// ---- admin inbox: unread badge data + banner feed (works before push keys) ----
+export async function markThreadSeen(args: { orderId?: number; pendingId?: number }) {
+  try {
+    if (!(await requireStaffAction())) return { ok: false as const };
+    const sql = conn();
+    if (args.orderId) await sql`update order_messages set seen_by_admin=true where order_id=${args.orderId} and sender='customer'`;
+    else if (args.pendingId) await sql`update order_messages set seen_by_admin=true where pending_id=${args.pendingId} and sender='customer'`;
+    else { await sql.end(); return { ok: false as const }; }
+    await sql.end();
+    return { ok: true as const };
+  } catch { return { ok: false as const }; }
+}
+
+// Everything needing the owner's attention since `sinceIso`: new customer
+// messages, new unconfirmed orders, new receipt uploads.
+export async function adminInbox(args: { sinceIso: string }) {
+  try {
+    if (!(await requireStaffAction())) return { ok: false as const, messages: [], orders: [], receipts: [] };
+    const sql = conn();
+    let since: string;
+    try {
+      since = new Date(args.sinceIso).toISOString();
+      if (Number.isNaN(Date.parse(since))) throw new Error('bad-date');
+    } catch {
+      since = new Date(Date.now() - 24 * 3600000).toISOString();
+    }
+    const messages = await sql`select m.text, m.created_at as "at", coalesce(o.display_id, p.display_id, p.ref) as "displayId", c.full_name as name from order_messages m left join orders o on o.id=m.order_id left join pending_refs p on p.id=m.pending_id or p.id=o.pending_id left join customers c on c.id=o.customer_id or c.id=p.customer_id where m.sender='customer' and coalesce(m.seen_by_admin,false)=false and m.created_at > ${since} order by m.id desc limit 20`.catch(() => []);
+    const orders = await sql`select p.display_id as "displayId", p.expected_total as total, p.created_at as "at", c.full_name as name from pending_refs p left join customers c on c.id=p.customer_id where p.status in ('pending','under') and p.created_at > ${since} order by p.id desc limit 20`.catch(() => []);
+    const receipts = await sql`select s.amount_claimed as amount, s.created_at as "at", p.display_id as "displayId", c.full_name as name from payment_submissions s join pending_refs p on p.id=s.pending_id left join customers c on c.id=p.customer_id where s.proof_url is not null and s.proof_url <> '' and s.created_at > ${since} order by s.id desc limit 20`.catch(() => []);
+    await sql.end();
+    return { ok: true as const, messages, orders, receipts };
+  } catch { return { ok: false as const, messages: [] as any[], orders: [] as any[], receipts: [] as any[] }; }
 }
 
 // ---- refund / credit / cashout / cancel-money requests ----
@@ -865,3 +967,4 @@ export async function logEvent(args: { orderId?: number; actor: string; action: 
     return { ok: true as const };
   } catch { return { ok: false as const }; }
 }
+

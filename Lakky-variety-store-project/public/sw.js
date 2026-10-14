@@ -19,6 +19,23 @@ self.addEventListener('fetch', (e) => {
   );
 });
 self.addEventListener('push', (e) => {
-  const text = e.data ? e.data.text() : 'Lakky Variety Store update';
-  e.waitUntil(self.registration.showNotification('Lakky Variety Store', { body: text }));
+  let title = 'Lakky Variety Store';
+  let body = 'You have an update';
+  let url = '/admin';
+  try {
+    const d = e.data ? e.data.json() : null;
+    if (d) {
+      if (d.title) title = d.title;
+      if (d.body) body = d.body;
+      if (d.url) url = d.url;
+    } else if (e.data) {
+      body = e.data.text();
+    }
+  } catch { if (e.data) body = e.data.text(); }
+  e.waitUntil(self.registration.showNotification(title, { body, icon: '/icon-192.png', badge: '/icon-192.png', data: { url } }));
+});
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || '/admin';
+  e.waitUntil(clients.openWindow(url));
 });

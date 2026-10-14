@@ -14,6 +14,7 @@ function getConn() {
 }
 const DDL = `
 alter table pending_refs add column if not exists reference_id text unique;
+alter table pending_refs add column if not exists display_id text unique;
 alter table pending_refs add column if not exists credit_used integer default 0;
 alter table pending_refs add column if not exists coupon_code text;
 alter table products add column if not exists wholesale_tiers jsonb;
@@ -41,7 +42,10 @@ alter table settings add column if not exists announcement_text text default '';
 alter table settings add column if not exists social_links jsonb default '[]';
 alter table settings add column if not exists about_text text default '';
 alter table settings add column if not exists help_text text default '';
-create table if not exists order_messages (id serial primary key, order_id integer not null references orders(id) on delete cascade, sender text not null, text text not null, created_at timestamptz default now());
+create table if not exists order_messages (id serial primary key, order_id integer references orders(id) on delete cascade, pending_id integer references pending_refs(id) on delete cascade, sender text not null, text text not null, seen_by_admin boolean default true, created_at timestamptz default now());
+alter table order_messages add column if not exists pending_id integer references pending_refs(id) on delete cascade;
+alter table order_messages add column if not exists seen_by_admin boolean default true;
+create table if not exists push_subscriptions (id serial primary key, endpoint text unique not null, p256dh text not null, auth text not null, created_at timestamptz default now());
 create table if not exists refund_requests (id serial primary key, order_id integer references orders(id) on delete set null, customer_id integer references customers(id) on delete set null, kind text not null, amount integer not null default 0, bank_name text default '', account_number text default '', account_name text default '', status text default 'pending', created_at timestamptz default now());
 create table if not exists order_events (id serial primary key, order_id integer references orders(id) on delete cascade, actor text not null, action text not null, note text default '', created_at timestamptz default now());
 create table if not exists reviews (id serial primary key, product_name text not null, customer_name text default '', order_id integer references orders(id) on delete set null, stars integer not null default 5, note text default '', hidden boolean default false, created_at timestamptz default now());

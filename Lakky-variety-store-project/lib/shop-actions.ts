@@ -88,7 +88,12 @@ export async function saveSettings(patch: Record<string, unknown>) {
   } catch { return { ok: false as const }; }
 }
 
-export type CartLine = { attrs?: Record<string, string>; price: number; qty: number; addon?: { name: string; price: number } | null };
+export type CartLine = { attrs?: Record<string, string>; price: number; qty: number; addons?: { name: string; price: number }[]; addon?: { name: string; price: number } | null };
+function adsOf(line: CartLine): { name: string; price: number }[] {
+  if (line.addons && line.addons.length) return line.addons;
+  if (line.addon) return [line.addon];
+  return [];
+}
 
 // ---- 2. Checkout creates the pending order in Supabase ----
 async function resolveVariantSkuId(attrs: Record<string, string> | undefined, price: number): Promise<number | null> {
@@ -116,20 +121,23 @@ export async function createPending(args: {
       .onConflictDoUpdate({ target: customers.phone, set: { fullName: args.name } })
       .returning({ id: customers.id });
     const customerId = (cust as any[])[0].id;
+    // Idempotency first (before drawing serials): same tap twice (or retry)
+    // returns the SAME order, never a second one.
+    if (args.idemKey) {
+      const dup: any = await db.execute(dsql`select id, ref, display_id as "displayId", expected_total as "expectedTotal", credit_applied as "creditApplied" from pending_refs where idempotency_key = ${args.idemKey} limit 1`);
+      const drows = dup.rows || dup;
+      if (drows.length) {
+        return { ok: true as const, ref: drows[0].ref, displayId: drows[0].displayId, pendingId: drows[0].id, total: Number(drows[0].expectedTotal), creditUsed: Number(drows[0].creditApplied || 0), duplicate: true as const };
+      }
+    }
+    // One Order ID, assigned at submit (LVS format). No Reference IDs anywhere.
     const refYear = new Date().getFullYear();
     const seq = await db.execute(dsql`select nextval('pending_ref_seq') as n`);
     const n = Number((seq as any).rows ? (seq as any).rows[0].n : (seq as any)[0].n);
     const ref = `P-${refYear}-${String(n).padStart(4, '0')}`;
-    const { makeRef } = await import('./pricing');
-    let referenceId: string | null = null;
-    for (let i = 0; i < 5 && !referenceId; i++) {
-      const code = makeRef();
-      try {
-        const chk: any = await db.execute(dsql`select id from pending_refs where reference_id = ${code} limit 1`);
-        const rows = chk.rows || chk;
-        if (!rows.length) referenceId = code;
-      } catch { /* retry */ }
-    }
+    const serialRes: any = await db.execute(dsql`select nextval('order_serial_seq') as n`);
+    const serial = Number(serialRes.rows ? serialRes.rows[0].n : serialRes[0].n);
+    const displayId = `LVS-${String(serial).padStart(3, '0')}-${last4(phone)}`;
     // Server-side totals: browser prices are display-only. Re-price every line
     // from the database, apply a valid coupon first, then all store credit.
     let gross = 0;
@@ -142,15 +150,15 @@ export async function createPending(args: {
         if (rows.length) unit = Number(rows[0].price);
       }
       gross += unit * l.qty;
-      if (l.addon) {
-        let ap = l.addon.price;
+      for (const ad of adsOf(l)) {
+        let ap = ad.price;
         try {
-          const pa: any = await db.execute(dsql`select price from product_addons where name = ${l.addon!.name} limit 1`);
+          const pa: any = await db.execute(dsql`select price from product_addons where name = ${ad.name} limit 1`);
           const pr = pa.rows || pa;
           if (pr.length) ap = Number(pr[0].price);
           else {
-            const ad = await db.select().from(addons);
-            const hit = (ad as any[]).find((a) => a.name === l.addon!.name);
+            const ads = await db.select().from(addons);
+            const hit = (ads as any[]).find((a) => a.name === ad.name);
             if (hit) ap = hit.price;
           }
         } catch { /* browser price stands */ }
@@ -175,16 +183,8 @@ export async function createPending(args: {
     const balRows = bal.rows || bal;
     const serverUsed = Math.min(balRows.length ? Number(balRows[0].b) : 0, gross);
     const serverTotal = Math.max(0, gross - serverUsed);
-    // Idempotency: same tap twice (or retry) returns the SAME pending, never a second one.
-    if (args.idemKey) {
-      const dup: any = await db.execute(dsql`select id, ref from pending_refs where idempotency_key = ${args.idemKey} limit 1`);
-      const drows = dup.rows || dup;
-      if (drows.length) {
-        return { ok: true as const, ref: drows[0].ref, pendingId: drows[0].id, total: serverTotal, creditUsed: serverUsed, duplicate: true as const };
-      }
-    }
     const prow = await db.insert(pendingRefs).values({
-      ref, referenceId, customerId, idempotencyKey: args.idemKey || null,
+      ref, referenceId: null, customerId, displayId, idempotencyKey: args.idemKey || null,
       fulfilment: { method: args.method, area: args.area, day: args.day },
       expectedTotal: serverTotal, creditApplied: serverUsed, couponCode: couponCode || null,
       status: 'draft', agreedAt: args.agreedAt ? new Date(args.agreedAt) : null,
@@ -196,22 +196,37 @@ export async function createPending(args: {
       const skuList = skuRows ? (skuRows.rows || skuRows) : [];
       const unit = skuList.length ? Number(skuList[0].price) : l.price;
       await db.insert(pendingItems).values({ pendingId, variantSkuId: skuId, qty: l.qty, unitPriceSnapshot: unit } as any);
-      if (l.addon) {
-        const ad = await db.select().from(addons);
-        const hit = (ad as any[]).find((a) => a.name === l.addon!.name) || null;
-        const pa: any = await db.execute(dsql`select id, price from product_addons where name = ${l.addon!.name} limit 1`).catch(() => null);
+      for (const ad of adsOf(l)) {
+        const adRows = await db.select().from(addons);
+        const hit = (adRows as any[]).find((a) => a.name === ad.name) || null;
+        const pa: any = await db.execute(dsql`select id, price from product_addons where name = ${ad.name} limit 1`).catch(() => null);
         const paRows = pa ? (pa.rows || pa) : [];
-        const addonPrice = paRows.length ? Number(paRows[0].price) : (hit ? hit.price : l.addon.price);
+        const addonPrice = paRows.length ? Number(paRows[0].price) : (hit ? hit.price : ad.price);
         await db.insert(pendingItems).values({ pendingId, addonId: hit ? hit.id : null, qty: l.qty, unitPriceSnapshot: addonPrice } as any);
       }
     }
-    return { ok: true as const, ref, pendingId, total: serverTotal, creditUsed: serverUsed };
+    // Buzz the owner's phone (works once push keys are added; silent before).
+    try {
+      const { sendAdminPush } = await import('./push');
+      await sendAdminPush({ title: 'New order', body: `${displayId}: ${args.name} — ₦${serverTotal.toLocaleString()}`, url: `/admin/orders/${encodeURIComponent(displayId)}` });
+    } catch { /* push best-effort */ }
+    return { ok: true as const, ref, displayId, pendingId, total: serverTotal, creditUsed: serverUsed };
   } catch { return { ok: false as const }; }
 }
 
+// Find a pending by Order ID (display_id), internal ref, or legacy reference code.
+// Customers only ever see the Order ID; old codes still resolve silently.
+async function findPendingByCode(code: string) {
+  const c = String(code || '').trim();
+  if (!c) return null;
+  const rows = (await db.select().from(pendingRefs).where(
+    or(eq(pendingRefs.ref, c), eq(pendingRefs.referenceId, c), eq(pendingRefs.displayId, c), eq(pendingRefs.displayId, c.toUpperCase()))
+  ).limit(2)) as any[];
+  return rows[0] || null;
+}
+
 export async function recordPayment(args: { ref: string; amount: number; date: string; time?: string; reference?: string }) {  try {
-    const p = await db.select().from(pendingRefs).where(or(eq(pendingRefs.ref, args.ref), eq(pendingRefs.referenceId, args.ref))).limit(2);
-    const hit = (p as any[])[0];
+    const hit = await findPendingByCode(args.ref);
     if (!hit) return { ok: false as const };
     await db.insert(paymentSubmissions).values({
       pendingId: hit.id, amountClaimed: args.amount,
@@ -236,8 +251,7 @@ export async function confirmOrder(args: { pendingRef: string; verifiedAmount: n
   try {
     if (!(await requireStaffAction())) return { ok: false as const, reason: 'admin-only' };
     if (!args.seenBank) return { ok: false as const, reason: 'seen-bank-required' };
-    const all = await db.select().from(pendingRefs).where(or(eq(pendingRefs.ref, args.pendingRef), eq(pendingRefs.referenceId, args.pendingRef))).limit(2);
-    const pend = (all as any[])[0];
+    const pend = await findPendingByCode(args.pendingRef);
     if (!pend || pend.status !== 'pending') return { ok: false as const, reason: 'not-pending' };
     const items = (await db.select().from(pendingItems).where(eq(pendingItems.pendingId, pend.id))) as any[];
     const subs = (await db.select().from(paymentSubmissions).where(eq(paymentSubmissions.pendingId, pend.id))) as any[];
@@ -254,9 +268,20 @@ export async function confirmOrder(args: { pendingRef: string; verifiedAmount: n
     const freeDays = (sets[0] as any)?.freeHoldDays ?? 14;
     const today = lagosToday();
     return await db.transaction(async (tx: any) => {
-      const serialRes: any = await tx.execute(dsql`select nextval('order_serial_seq') as n`);
-      const serial = Number(serialRes.rows ? serialRes.rows[0].n : serialRes[0].n);
-      const displayId = `LVS-${String(serial).padStart(3, '0')}-${l4}`;
+      // Reuse the Order ID given at submit. Only legacy rows without one draw a serial.
+      let displayId: string = (pend as any).displayId || null;
+      let serial = 0;
+      const m = displayId ? displayId.match(/^LVS-(\d+)-/) : null;
+      if (m) {
+        serial = Number(m[1]);
+        const clash: any = await tx.execute(dsql`select id from orders where display_id = ${displayId} limit 1`);
+        if ((clash.rows || clash).length) return { ok: false as const, reason: 'already-confirmed' };
+      } else {
+        const serialRes: any = await tx.execute(dsql`select nextval('order_serial_seq') as n`);
+        serial = Number(serialRes.rows ? serialRes.rows[0].n : serialRes[0].n);
+        displayId = `LVS-${String(serial).padStart(3, '0')}-${l4}`;
+        await tx.execute(dsql`update pending_refs set display_id = ${displayId} where id = ${pend.id} and display_id is null`);
+      }
       const skuLines = items.filter((i) => i.variantSkuId);
       for (const line of skuLines) {
         const upd: any = await tx.execute(dsql`update variant_skus set available = available - ${line.qty}, reserved = reserved + ${line.qty} where id = ${line.variantSkuId} and available >= ${line.qty}`);
@@ -285,8 +310,8 @@ export async function confirmOrder(args: { pendingRef: string; verifiedAmount: n
       if (pend.couponCode) {
         await tx.execute(dsql`update coupons set used = used + 1 where code = ${pend.couponCode}`);
       }
-      await tx.execute(dsql`insert into notifications (customer_id, order_id, type, message) values (${pend.customerId}, ${orderId}, 'confirmed', ${'Order ' + displayId + ' confirmed.'})`);
-      await tx.execute(dsql`insert into order_messages (order_id, sender, text) values (${orderId}, 'owner', 'Payment confirmed. Order is being prepared.')`);
+      await tx.execute(dsql`insert into notifications (customer_id, order_id, type, message) values (${pend.customerId}, ${orderId}, 'confirmed', ${over > 0 ? 'Order ' + displayId + ' confirmed. You paid ₦' + over.toLocaleString() + ' extra — open your order to keep it as store credit or ask for a refund.' : 'Order ' + displayId + ' confirmed.'})`);
+      await tx.execute(dsql`insert into order_messages (order_id, sender, text) values (${orderId}, 'owner', ${over > 0 ? 'Payment confirmed. You paid extra (' + '₦' + over.toLocaleString() + ') — reply here: keep as store credit, or send your bank details for a refund.' : 'Payment confirmed. Order is being prepared.'})`);
       return { ok: true as const, displayId, over };
     });
   } catch (e: any) {
@@ -295,13 +320,14 @@ export async function confirmOrder(args: { pendingRef: string; verifiedAmount: n
   }
 }
 
-// ---- 4. Track: Order ID + FULL phone, or pending Reference ID + FULL phone ----
+// ---- 4. Track: Order ID + FULL checkout phone ----
 export async function trackOrder(args: { displayId: string; phone: string }) {
   try {
-    const id = String(args.displayId || '').trim().toUpperCase();
+    const raw = String(args.displayId || '').trim();
+    const id = raw.toUpperCase();
     const phone = normalizePhone(args.phone);
     if (!id || !phone) return { ok: false as const };
-    const found = await db.select().from(orders).where(or(eq(orders.displayId, id), eq(orders.displayId, String(args.displayId || '').trim()))).limit(2);
+    const found = await db.select().from(orders).where(or(eq(orders.displayId, id), eq(orders.displayId, raw))).limit(2);
     const order = (found as any[])[0];
     if (order) {
       const cust = ((await db.select().from(customers).where(eq(customers.id, order.customerId)).limit(2)) as any[]);
@@ -311,20 +337,25 @@ export async function trackOrder(args: { displayId: string; phone: string }) {
       const extraDays = freeUntil && today > freeUntil
         ? Math.ceil((new Date(today + 'T12:00:00Z').getTime() - new Date(freeUntil + 'T12:00:00Z').getTime()) / 86400000)
         : 0;
-      const pref = order.pendingId ? ((await db.select({ ref: pendingRefs.ref, referenceId: pendingRefs.referenceId }).from(pendingRefs).where(eq(pendingRefs.id, order.pendingId)).limit(2)) as any[]) : [];
-      const refCode = pref.length ? (pref[0].referenceId || pref[0].ref) : '';
+      let hasReceipt = false;
+      try {
+        if (order.pendingId) {
+          const subs = (await db.select().from(paymentSubmissions).where(eq(paymentSubmissions.pendingId, order.pendingId))) as any[];
+          hasReceipt = subs.some((s) => s.proofUrl);
+        }
+      } catch { /* receipt flag stays false */ }
       return {
         ok: true as const,
         order: {
-          id: order.id, displayId: order.displayId, ref: refCode, status: order.paymentStatus, fulfilment: order.fulfilmentStatus,
-          total: order.total, paid: order.paidAmount,
+          id: order.id, displayId: order.displayId, status: order.paymentStatus, fulfilment: order.fulfilmentStatus,
+          method: order.fulfilmentMethod || (order.fulfilmentDetails as any)?.method || '',
+          total: order.total, paid: order.paidAmount, hasReceipt,
           confirmedAt: order.confirmedAt, freeUntil, extraDays, fee: extraDays * rate, rate,
         },
       };
     }
-    // Pending stage: reference code + phone sees where the payment stands
-    const pend = (await db.select().from(pendingRefs).where(or(eq(pendingRefs.ref, String(args.displayId || '').trim()), eq(pendingRefs.referenceId, String(args.displayId || '').trim()))).limit(2)) as any[];
-    const p = pend[0];
+    // Not confirmed yet: Order ID + phone shows the waiting state (never a timeline).
+    const p = await findPendingByCode(raw);
     if (!p) return { ok: false as const };
     const cust = ((await db.select().from(customers).where(eq(customers.id, p.customerId)).limit(2)) as any[]);
     if (!cust.length || normalizePhone(cust[0].phone) !== phone) return { ok: false as const };
@@ -336,15 +367,19 @@ export async function trackOrder(args: { displayId: string; phone: string }) {
       const owner = (mm.messages || []).filter((m: any) => m.sender === 'owner');
       if (owner.length) notice = owner[owner.length - 1].text;
     } catch { /* notice stays empty */ }
-    return { ok: true as const, pending: true as const, stage, ref: p.referenceId || p.ref, total: p.expectedTotal, status: p.status, notice };
+    return {
+      ok: true as const, pending: true as const, stage,
+      displayId: p.displayId || p.ref, pendingId: p.id,
+      method: (p.fulfilment as any)?.method || '',
+      total: p.expectedTotal, status: p.status, notice,
+    };
   } catch { return { ok: false as const }; }
 }
 
 // ---- Receipt upload: bytes go to private Supabase Storage, key saved on the submission ----
 export async function submitReceipt(args: { ref: string; amount: number; fileBase64: string | null; contentType: string; ext: string; bankRef?: string }) {
   try {
-    const all = (await db.select().from(pendingRefs).where(or(eq(pendingRefs.ref, args.ref), eq(pendingRefs.referenceId, args.ref))).limit(2)) as any[];
-    const pend = all[0];
+    const pend = await findPendingByCode(args.ref);
     if (!pend) return { ok: false as const, reason: 'not-found' };
     let key: string | null = null;
     if (args.fileBase64) {
@@ -360,6 +395,12 @@ export async function submitReceipt(args: { ref: string; amount: number; fileBas
       transferDate: lagosToday(), proofUrl: key, reference: args.bankRef || null, status: 'pending',
     } as any);
     await db.update(pendingRefs).set({ agreedAt: new Date(), status: 'pending' } as any).where(eq(pendingRefs.id, pend.id));
+    // Buzz the owner's phone (works once push keys are added; silent before).
+    try {
+      const { sendAdminPush } = await import('./push');
+      const label = (pend as any).displayId || (pend as any).display_id || args.ref;
+      await sendAdminPush({ title: 'Receipt uploaded', body: `${label}: ₦${Number(args.amount).toLocaleString()} claimed`, url: `/admin/orders/${encodeURIComponent(label)}` });
+    } catch { /* push best-effort */ }
     return { ok: true as const, key };
   } catch { return { ok: false as const, reason: 'error' }; }
 }
@@ -378,8 +419,7 @@ export async function getReceiptUrl(args: { key: string }) {
 export async function getSubmissionProof(args: { ref: string }) {
   try {
     if (!(await requireStaffAction())) return { ok: false as const };
-    const all = (await db.select().from(pendingRefs).where(or(eq(pendingRefs.ref, args.ref), eq(pendingRefs.referenceId, args.ref))).limit(2)) as any[];
-    const pend = all[0];
+    const pend = await findPendingByCode(args.ref);
     if (!pend) return { ok: false as const };
     const subs = ((await db.select().from(paymentSubmissions).where(eq(paymentSubmissions.pendingId, pend.id))) as any[]);
     if (!subs.length) return { ok: false as const };
