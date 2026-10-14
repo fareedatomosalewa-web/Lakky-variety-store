@@ -4,7 +4,7 @@ import { confirmOrder, getSubmissionProof } from '../../../../lib/shop-actions';
 import { useAdminGuard } from '../../../../lib/use-admin-guard';
 import { n } from '../../../../lib/pricing';
 import AdminShell from '../../shell';
-import { TimelineSteps } from '../../../orders/page';
+import { TimelineSteps } from '../../../../lib/timeline';
 import { getOrderThread, getPendingDetail, getMessages, listFees, listRefunds, decideRefund, markFeePaid, markThreadSeen, postMessage, rejectPending, advanceOrder } from '../../../../lib/shop-v1';
 import { stepLabel } from '../../../../lib/pricing';
 const REJECTS = ['Underpayment', 'Fake receipt', 'Wrong order'];

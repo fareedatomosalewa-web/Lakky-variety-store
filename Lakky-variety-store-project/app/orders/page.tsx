@@ -3,44 +3,10 @@ import { useState } from 'react';
 import { trackOrder } from '../../lib/shop-actions';
 import { useCustomerOnly } from '../../lib/use-customer-only';
 import { pushNotice } from '../../lib/harden';
+import { TimelineSteps } from '../../lib/timeline';
 import { cancelOrder, getMessages, postMessage, requestMoney, setProgress, addReview, reportProblem } from '../../lib/shop-v1';
 const STEP_LABEL: Record<string, string> = { pending: 'Waiting for confirmation', processing: 'Confirmed', packaged: 'Being packed', ready: 'Ready for pickup', onway: 'On the way', completed: 'Completed', cancelled: 'Cancelled', 'cancel-requested': 'Cancellation requested' };
 const stepName = (s: string) => STEP_LABEL[s] || s;
-
-// Owner timeline: Order placed → Receipt received → Payment confirmed →
-// Ready for pickup → Collected. Done = green, current = highlighted, rest = gray.
-export function posFor(fulfilment: string): number {
-  if (fulfilment === 'completed') return 4;
-  if (fulfilment === 'ready' || fulfilment === 'onway') return 3;
-  return 2;
-}
-export function TimelineSteps({ fulfilment, confirmedAt, hasReceipt, compact }: { fulfilment: string; confirmedAt?: string; hasReceipt?: boolean; compact?: boolean }) {
-  const pos = posFor(fulfilment);
-  const titles = ['Order placed', 'Receipt received', 'Payment confirmed', 'Ready for pickup', 'Collected'];
-  const subs = [
-    '',
-    hasReceipt === false ? 'Not yet' : '',
-    confirmedAt ? new Date(confirmedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '',
-    pos === 2 ? 'We’ll message you in the app' : '',
-    '',
-  ];
-  return (<div className="timeline" style={{ marginTop: 8 }}>
-    {titles.map((t, i) => {
-      const state = fulfilment === 'completed' || i < pos ? 'done' : i === pos ? 'now' : 'todo';
-      return (
-        <div key={t} style={{ display: 'flex', gap: 10, padding: '7px 0', opacity: state === 'todo' ? 0.55 : 1 }}>
-          <span style={{
-            width: 26, height: 26, borderRadius: '50%', display: 'inline-block', textAlign: 'center', lineHeight: '26px',
-            background: state === 'done' ? '#47745A' : state === 'now' ? '#5A2948' : '#fff',
-            border: state === 'todo' ? '2px solid #CFC4BC' : 'none',
-            color: state === 'todo' ? '#756B68' : '#fff', fontWeight: 700, fontSize: 14,
-          }}>{state === 'done' ? '✓' : state === 'now' ? (i + 1) : (i + 1)}</span>
-          <div><b>{t}</b>{!compact && subs[i] ? <div className="small">{subs[i]}</div> : null}</div>
-        </div>
-      );
-    })}
-  </div>);
-}
 const CANCEL_REASONS = ['Price too high', 'No longer interested', 'Found it elsewhere', 'Ordered by mistake', 'Other'];
 
 function TimelineCard({ o }: { o: any }) {
