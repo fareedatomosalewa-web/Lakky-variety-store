@@ -5,6 +5,7 @@
 import postgres from 'postgres';
 import crypto from 'crypto';
 import { stepLabel } from './pricing';
+import { normalizePhone } from './phone';
 
 function conn() {
   const url = process.env.DATABASE_URL || '';
@@ -73,7 +74,7 @@ export async function listConfirmed() {
     // ADMIN-GATED:listConfirmed
     if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
-    const rows = await sql`select o.id, o.display_id as "displayId", o.total, o.fulfilment_status as st, o.confirmed_at as "at", c.full_name as name, c.phone, (select reference_id from pending_refs p where p.id=o.pending_id) as "referenceId", (select count(*)::int from order_messages m where m.order_id=o.id and m.sender='customer' and coalesce(m.seen_by_admin,false)=false) as "unread" from orders o left join customers c on c.id=o.customer_id order by o.id desc limit 100`;
+    const rows = await sql`select o.id, o.display_id as "displayId", o.total, o.paid_amount as paid, o.fulfilment_status as st, o.confirmed_at as "at", o.completed_at as "completedAt", c.full_name as name, c.phone, (select reference_id from pending_refs p where p.id=o.pending_id) as "referenceId", (select count(*)::int from order_messages m where m.order_id=o.id and m.sender='customer' and coalesce(m.seen_by_admin,false)=false) as "unread" from orders o left join customers c on c.id=o.customer_id order by o.id desc limit 100`;
     await sql.end();
     return { ok: true as const, rows };
   } catch { return { ok: false as const, rows: [] as any[] }; }
@@ -94,8 +95,30 @@ export async function adminSearch(args: { q: string }) {  try {
     // ADMIN-GATED:adminSearch
     if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
-    const q = '%' + String(args.q || '').trim() + '%';
-    const rows = await sql`select o.id, o.display_id as "displayId", o.total, o.paid_amount as paid, o.payment_status as pay, o.fulfilment_status as st, c.full_name as name, c.phone, (select reference_id from pending_refs p where p.id=o.pending_id) as "referenceId" from orders o left join customers c on c.id=o.customer_id where o.display_id ilike ${q} or c.full_name ilike ${q} or c.phone ilike ${q} or exists (select 1 from pending_refs p where p.id=o.pending_id and p.reference_id ilike ${q}) order by o.id desc limit 100`;
+    const raw = String(args.q || '').trim();
+    if (!raw) { await sql.end(); return { ok: true as const, rows: [] as any[] }; }
+    const q = '%' + raw + '%';
+    const digits = raw.replace(/\D/g, '');
+    // Phone-mode only when the query is basically a phone number, so "LVS-20"
+    // never turns into a last-2-digits phone match.
+    const phoneMode = digits.length >= 3 && digits.length >= raw.length - 2;
+    const rows = await sql`
+      select * from (
+        select 'pending' as kind, coalesce(p.display_id, p.ref) as "displayId", p.ref,
+               p.status, p.expected_total as total, p.created_at as "at",
+               c.full_name as name, c.phone, p.id as "rowId"
+        from pending_refs p left join customers c on c.id=p.customer_id
+        where p.status not in ('draft','expired')
+        union all
+        select 'order' as kind, o.display_id as "displayId", null as ref,
+               coalesce(o.fulfilment_status, o.payment_status, '') as status,
+               o.total, o.confirmed_at as "at", c.full_name as name, c.phone, o.id as "rowId"
+        from orders o left join customers c on c.id=o.customer_id
+      ) x
+      where x."displayId" ilike ${q} or x.ref ilike ${q} or x.name ilike ${q} or x.phone ilike ${q}
+        ${phoneMode ? sql`or regexp_replace(coalesce(x.phone,''), '\\D', '', 'g') like ${'%' + digits + '%'}` : sql``}
+      order by x."at" desc nulls last, x."rowId" desc
+      limit 25`;
     await sql.end();
     return { ok: true as const, rows };
   } catch { return { ok: false as const, rows: [] as any[] }; }
@@ -320,7 +343,7 @@ export async function advanceOrder(args: { orderId: number; to: string; actor?: 
     if (!cur.length) { await sql.end(); return { ok: false as const }; }
     const from = String(cur[0].st || '');
     if (!(NEXT[from] || []).includes(args.to)) { await sql.end(); return { ok: false as const }; }
-    await sql`update orders set fulfilment_status=${args.to} where id=${args.orderId}`;
+    await sql`update orders set fulfilment_status=${args.to}, completed_at=${args.to === 'completed' ? sql`coalesce(completed_at, now())` : sql`completed_at`} where id=${args.orderId}`;
     await sql`insert into order_events (order_id, actor, action) values (${args.orderId}, ${args.actor || 'owner'}, ${'status->' + args.to})`;
     await sql`insert into notifications (customer_id, order_id, type, message) values (${cur[0].cid}, ${args.orderId}, 'progress', ${'Order ' + cur[0].displayId + ' is now: ' + stepLabel(args.to)})`;
     await sql`insert into order_messages (order_id, sender, text) values (${args.orderId}, 'owner', ${'Status update: ' + stepLabel(args.to)})`;
@@ -439,7 +462,7 @@ export async function adminInbox(args: { sinceIso: string }) {
     } catch {
       since = new Date(Date.now() - 24 * 3600000).toISOString();
     }
-    const messages = await sql`select m.text, m.created_at as "at", coalesce(o.display_id, p.display_id, p.ref) as "displayId", c.full_name as name from order_messages m left join orders o on o.id=m.order_id left join pending_refs p on p.id=m.pending_id or p.id=o.pending_id left join customers c on c.id=o.customer_id or c.id=p.customer_id where m.sender='customer' and coalesce(m.seen_by_admin,false)=false and m.created_at > ${since} order by m.id desc limit 20`.catch(() => []);
+    const messages = await sql`select m.id, m.text, m.created_at as "at", coalesce(o.display_id, p.display_id, p.ref) as "displayId", c.full_name as name from order_messages m left join orders o on o.id=m.order_id left join pending_refs p on p.id=m.pending_id or p.id=o.pending_id left join customers c on c.id=o.customer_id or c.id=p.customer_id where m.sender='customer' and coalesce(m.seen_by_admin,false)=false and m.created_at > ${since} order by m.id desc limit 20`.catch(() => []);
     const orders = await sql`select p.display_id as "displayId", p.expected_total as total, p.created_at as "at", c.full_name as name from pending_refs p left join customers c on c.id=p.customer_id where p.status in ('pending','under') and p.created_at > ${since} order by p.id desc limit 20`.catch(() => []);
     const receipts = await sql`select s.amount_claimed as amount, s.created_at as "at", p.display_id as "displayId", c.full_name as name from payment_submissions s join pending_refs p on p.id=s.pending_id left join customers c on c.id=p.customer_id where s.proof_url is not null and s.proof_url <> '' and s.created_at > ${since} order by s.id desc limit 20`.catch(() => []);
     await sql.end();
@@ -571,7 +594,16 @@ export async function addReview(args: { productName: string; customerName: strin
 export async function reportProblem(args: { orderId: number; reason: string; photoKey?: string }) {
   try {
     const sql = conn();
-    await sql`insert into problem_reports (order_id, reason, photo_url) values (${args.orderId}, ${args.reason}, ${args.photoKey || ''})`;
+    const reason = String(args.reason || '').trim().slice(0, 500);
+    if (!reason) { await sql.end(); return { ok: false as const, reason: 'missing' }; }
+    const o = await sql`select fulfilment_status as st, completed_at as "completedAt", confirmed_at as "confirmedAt" from orders where id=${args.orderId} limit 1`;
+    if (!o.length) { await sql.end(); return { ok: false as const, reason: 'not-found' }; }
+    if (o[0].st !== 'completed') { await sql.end(); return { ok: false as const, reason: 'not-completed' }; }
+    const st = await sql`select report_window_hours as hrs from settings limit 1`;
+    const hrs = Math.max(1, Number(st[0]?.hrs ?? 48));
+    const done = new Date(o[0].completedAt || o[0].confirmedAt || Date.now()).getTime();
+    if (Date.now() - done > hrs * 3600000) { await sql.end(); return { ok: false as const, reason: 'window-closed' }; }
+    await sql`insert into problem_reports (order_id, reason, photo_url) values (${args.orderId}, ${reason}, ${args.photoKey || ''})`;
     await sql.end();
     return { ok: true as const };
   } catch { return { ok: false as const }; }
@@ -589,18 +621,32 @@ export async function toggleWish(args: { customerId: number; productName: string
   } catch { return { ok: false as const }; }
 }
 
-// ---- customer accounts (email OTP later; owner resets in admin) ----
+// ---- customer accounts (owner can reset/edit contact; customers can reset
+// with the email + phone already on their account) ----
 export async function signUpCustomer(args: { name: string; phone: string; email: string; password: string }) {
   try {
     const sql = conn();
-    if (!args.name || !args.phone || !args.email || !args.password || args.password.length < 6) { await sql.end(); return { ok: false as const }; }
-    const dup = await sql`select id from customers where email=${args.email} limit 1`;
-    if (dup.length) { await sql.end(); return { ok: false as const, reason: 'email-used' }; }
+    const name = String(args.name || '').trim();
+    const email = String(args.email || '').trim().toLowerCase();
+    const phone = normalizePhone(args.phone);
+    const pdigits = phone.replace(/\D/g, '');
+    if (!name || pdigits.length < 8 || !email || !args.password || args.password.length < 6) { await sql.end(); return { ok: false as const, reason: 'missing' }; }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { await sql.end(); return { ok: false as const, reason: 'bad-email' }; }
+    const dupE = await sql`select id from customers where lower(email)=${email} limit 1`;
+    if (dupE.length) { await sql.end(); return { ok: false as const, reason: 'email-used' }; }
+    // Compare the last 10 digits so +234…, 234… and 0… are the same phone.
+    const dupP = await sql`select id from customers where right(regexp_replace(coalesce(phone,''),'\\D','','g'),10)=right(${pdigits},10) limit 1`;
+    if (dupP.length) { await sql.end(); return { ok: false as const, reason: 'phone-used' }; }
     const salt = crypto.randomBytes(16).toString('hex');
     const hash = salt + ':' + hashPw(args.password, salt);
-    const norm = String(args.phone).replace(/\D/g, '');
-    const ph = '+' + norm;
-    const rows = await sql`insert into customers (full_name, phone, email, password_hash, credit_balance) values (${args.name}, ${ph}, ${args.email}, ${hash}, 0) returning id`;
+    let rows: any[];
+    try {
+      rows = await sql`insert into customers (full_name, phone, email, password_hash, credit_balance) values (${name}, ${phone}, ${email}, ${hash}, 0) returning id`;
+    } catch (e: any) {
+      await sql.end();
+      if (String(e?.code) === '23505') return { ok: false as const, reason: 'email-used' };
+      return { ok: false as const, reason: 'error' };
+    }
     const token = crypto.randomBytes(24).toString('hex');
     await sql`insert into customer_sessions (id, customer_id, expires_at) values (${token}, ${rows[0].id}, ${new Date(Date.now() + 30 * 86400000).toISOString()})`;
     await sql.end();
@@ -610,15 +656,71 @@ export async function signUpCustomer(args: { name: string; phone: string; email:
 export async function signInCustomer(args: { email: string; password: string }) {
   try {
     const sql = conn();
-    const rows = await sql`select * from customers where email=${args.email} limit 1`;
-    if (!rows.length || !rows[0].password_hash) { await sql.end(); return { ok: false as const }; }
+    const email = String(args.email || '').trim().toLowerCase();
+    if (!email || !args.password) { await sql.end(); return { ok: false as const, reason: 'missing' }; }
+    const rows = await sql`select * from customers where lower(email)=${email} limit 1`;
+    if (!rows.length) { await sql.end(); return { ok: false as const, reason: 'no-account' }; }
+    if (!rows[0].password_hash) { await sql.end(); return { ok: false as const, reason: 'no-password' }; }
     const [salt, h] = String(rows[0].password_hash).split(':');
-    if (hashPw(args.password, salt) !== h) { await sql.end(); return { ok: false as const }; }
+    if (hashPw(args.password, salt) !== h) { await sql.end(); return { ok: false as const, reason: 'wrong-password' }; }
     const token = crypto.randomBytes(24).toString('hex');
     await sql`insert into customer_sessions (id, customer_id, expires_at) values (${token}, ${rows[0].id}, ${new Date(Date.now() + 30 * 86400000).toISOString()})`;
     await sql.end();
     return { ok: true as const, token, customerId: rows[0].id, name: rows[0].full_name };
-  } catch { return { ok: false as const }; }
+  } catch { return { ok: false as const, reason: 'error' }; }
+}
+// Self-service reset: only works when email AND the phone on the account match.
+// Sets a new password and signs out every old session on that account.
+export async function resetPasswordByContact(args: { email: string; phone: string; newPassword: string }) {
+  try {
+    const sql = conn();
+    const email = String(args.email || '').trim().toLowerCase();
+    const digits = normalizePhone(args.phone).replace(/\D/g, '');
+    if (!email || !digits || !args.newPassword || args.newPassword.length < 6) { await sql.end(); return { ok: false as const, reason: 'missing' }; }
+    const rows = await sql`select id from customers where lower(email)=${email} and right(regexp_replace(coalesce(phone,''),'\\D','','g'),10)=right(${digits},10) limit 1`;
+    if (!rows.length) { await sql.end(); return { ok: false as const, reason: 'no-match' }; }
+    const salt = crypto.randomBytes(16).toString('hex');
+    await sql`update customers set password_hash=${salt + ':' + hashPw(args.newPassword, salt)} where id=${rows[0].id}`;
+    await sql`delete from customer_sessions where customer_id=${rows[0].id}`;
+    await sql.end();
+    return { ok: true as const };
+  } catch { return { ok: false as const, reason: 'error' }; }
+}
+// Admin-only: correct a customer's email or phone (each stays unique).
+export async function updateCustomerContact(args: { customerId: number; email?: string; phone?: string }) {
+  try {
+    // ADMIN-GATED:updateCustomerContact
+    if (!(await requireAdminAction())) return { ok: false as const, reason: 'admin-only' };
+    const sql = conn();
+    const email = String(args.email || '').trim().toLowerCase();
+    const digits = normalizePhone(args.phone).replace(/\D/g, '');
+    if (!email) { await sql.end(); return { ok: false as const, reason: 'email-required' }; }
+    if (digits.length < 8) { await sql.end(); return { ok: false as const, reason: 'bad-phone' }; }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { await sql.end(); return { ok: false as const, reason: 'bad-email' }; }
+    const dupE = await sql`select id from customers where lower(email)=${email} and id<>${args.customerId} limit 1`;
+    if (dupE.length) { await sql.end(); return { ok: false as const, reason: 'email-used' }; }
+    const dupP = await sql`select id from customers where right(regexp_replace(coalesce(phone,''),'\\D','','g'),10)=right(${digits},10) and id<>${args.customerId} limit 1`;
+    if (dupP.length) { await sql.end(); return { ok: false as const, reason: 'phone-used' }; }
+    await sql`update customers set email=${email}, phone=${normalizePhone(args.phone)} where id=${args.customerId}`;
+    await sql.end();
+    return { ok: true as const };
+  } catch { return { ok: false as const, reason: 'error' }; }
+}
+// Customer-side message feed: shop replies on any of this customer's orders.
+export async function customerInbox(args: { token: string; sinceIso: string }) {
+  try {
+    const sql = conn();
+    if (!args.token) { await sql.end(); return { ok: false as const, messages: [] as any[] }; }
+    const s = await sql`select customer_id as "cid" from customer_sessions where id=${args.token} and expires_at > now() limit 1`;
+    if (!s.length) { await sql.end(); return { ok: false as const, messages: [] as any[] }; }
+    const cid = s[0].cid;
+    let since: string;
+    try { since = new Date(args.sinceIso).toISOString(); if (Number.isNaN(Date.parse(since))) throw new Error('bad'); }
+    catch { since = new Date(Date.now() - 86400000).toISOString(); }
+    const messages = await sql`select m.text, m.created_at as "at", coalesce(o.display_id, p.display_id, p.ref) as "displayId" from order_messages m left join orders o on o.id=m.order_id left join pending_refs p on p.id=m.pending_id or p.id=o.pending_id where m.sender='owner' and m.created_at > ${since} and coalesce(o.customer_id, p.customer_id)=${cid} order by m.id asc limit 20`;
+    await sql.end();
+    return { ok: true as const, messages };
+  } catch { return { ok: false as const, messages: [] as any[] }; }
 }
 export async function resetCustomerPassword(args: { customerId: number; newPassword: string }) {
   try {
@@ -883,27 +985,32 @@ export async function deleteProduct(args: { name: string }) {
 }
 
 // ---- date-range report from Supabase (plain numbers for the screen, CSV kept) ----
+// Money received = paid_amount of confirmed orders in the chosen dates.
+// Same definition as the Orders page's "Received this week" card, so the two
+// agree whenever the windows are the same. Rejected/underpaid pending orders
+// (which never became orders) are included as their own rows.
 export async function reportRange(args: { from: string; to: string }) {
   try {
     // ADMIN-GATED:reportRange
     if (!(await requireAdminAction())) return { ok: false as const };
     const sql = conn();
-    const rows = await sql`select o.display_id as id, o.total, o.paid_amount as paid, o.payment_status as pay, o.fulfilment_status as st, o.fulfilment_method as method, o.confirmed_at as at, o.stockpile_status as stock, (select coalesce(sum(amount),0)::int from fee_payments f where f.order_id=o.id and f.status='verified') as "feePaid" from orders o where o.confirmed_at::date >= ${args.from} and o.confirmed_at::date <= ${args.to} order by o.id limit 2000`;
+    const orders = await sql`select 'order' as kind, o.display_id as id, o.total, o.paid_amount as paid, o.payment_status as pay, o.fulfilment_status as st, o.fulfilment_method as method, o.stockpile_status as stock, o.confirmed_at as at, o.completed_at as "completedAt", c.full_name as name, c.phone from orders o left join customers c on c.id=o.customer_id where o.confirmed_at::date >= ${args.from} and o.confirmed_at::date <= ${args.to} order by o.id desc limit 2000`;
+    const pend = await sql`select 'pending' as kind, coalesce(p.display_id, p.ref) as id, p.expected_total as total, 0 as paid, p.status as pay, p.status as st, coalesce(p.fulfilment->>'method','') as method, '' as stock, p.created_at as at, null as "completedAt", c.full_name as name, c.phone from pending_refs p left join customers c on c.id=p.customer_id where p.status in ('rejected','under') and p.created_at::date >= ${args.from} and p.created_at::date <= ${args.to} order by p.id desc limit 500`;
     await sql.end();
-    const list = rows as any[];
-    const sum = (f: (o: any) => number) => list.reduce((s, o) => s + (f(o) || 0), 0);
-    const has = (v: string, ...ws: string[]) => list.filter((o) => ws.includes(String(v === 'pay' ? o.pay : o.st)));
+    const list = [...(orders as any[]), ...(pend as any[])];
+    const ord = orders as any[];
+    const sum = (f: (o: any) => number) => ord.reduce((s, o) => s + (f(o) || 0), 0);
     return {
       ok: true as const,
       summary: {
-        placed: list.length,
-        approved: has('pay', 'confirmed', 'overpayment').length,
-        rejected: list.filter((o) => o.st === 'cancelled').length,
-        under: has('pay', 'underpayment').length,
-        over: has('pay', 'overpayment').length,
-        pickup: list.filter((o) => o.method === 'Pickup').length,
-        delivery: list.filter((o) => o.method === 'Delivery').length,
-        stockpiled: list.filter((o) => o.stock === 'held').length,
+        placed: ord.length,
+        approved: ord.filter((o) => o.pay === 'confirmed' || o.pay === 'overpayment').length,
+        rejected: ord.filter((o) => o.st === 'cancelled').length + (pend as any[]).filter((o) => o.st === 'rejected').length,
+        under: ord.filter((o) => o.pay === 'underpayment').length + (pend as any[]).filter((o) => o.st === 'under').length,
+        over: ord.filter((o) => o.pay === 'overpayment').length,
+        pickup: ord.filter((o) => o.method === 'Pickup').length,
+        delivery: ord.filter((o) => o.method === 'Delivery').length,
+        stockpiled: ord.filter((o) => o.stock === 'held').length,
         money: sum((o) => Number(o.paid)),
       },
       rows: list,

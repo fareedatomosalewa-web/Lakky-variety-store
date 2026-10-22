@@ -7,6 +7,7 @@ import AdminShell from '../../shell';
 import { TimelineSteps } from '../../../../lib/timeline';
 import { getOrderThread, getPendingDetail, getMessages, listFees, listRefunds, decideRefund, markFeePaid, markThreadSeen, postMessage, rejectPending, advanceOrder } from '../../../../lib/shop-v1';
 import { stepLabel } from '../../../../lib/pricing';
+import { toast } from '../../../../lib/notify-client';
 const REJECTS = ['Underpayment', 'Fake receipt', 'Wrong order'];
 export default function AdminOrder({ params }: { params: { id: string } }) {
   const allowed = useAdminGuard(['admin', 'staff']);
@@ -25,6 +26,13 @@ export default function AdminOrder({ params }: { params: { id: string } }) {
   const [fees, setFees] = useState<any[]>([]);
   // Receipt lightbox + payment-check flow.
   const [light, setLight] = useState(false); const [zoom, setZoom] = useState(1);
+  const [proofLegacy, setProofLegacy] = useState(false); const [proofBroken, setProofBroken] = useState(false);
+  const openReceipt = async () => {
+    // Refresh the signed link (they expire after 15 minutes).
+    const fresh: any = await getSubmissionProof({ ref: params.id }).catch(() => null);
+    if (fresh && fresh.ok && fresh.url) { setProofUrl(fresh.url); setProofBroken(false); }
+    setZoom(1); setLight(true);
+  };
   const [flow, setFlow] = useState<'idle' | 'exact' | 'less' | 'more'>('idle');
   const [overAmt, setOverAmt] = useState('');
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -47,7 +55,7 @@ export default function AdminOrder({ params }: { params: { id: string } }) {
         setO(null);
       }
     }).catch(() => setO(null));
-    getSubmissionProof({ ref: params.id }).then((r: any) => { if (r && r.ok && r.url) setProofUrl(r.url); }).catch(() => {});
+    getSubmissionProof({ ref: params.id }).then((r: any) => { if (r && r.ok) { if (r.url) setProofUrl(r.url); if (r.legacy) setProofLegacy(true); } }).catch(() => {});
     getOrderThread({ ref: params.id }).then((r: any) => { if (r && r.ok) { if (r.orderId) { setOrderId(r.orderId); setMsgs(r.messages || []); markThreadSeen({ orderId: r.orderId }).catch(() => {}); } else if (r.pendingId) setPendingId(r.pendingId); if (r.timeline) setTimeline(r.timeline); if (r.status) setCurStatus(r.status); if (r.orderId) listFees({ orderId: r.orderId }).then((f: any) => { if (f && f.ok) setFees(f.rows); }).catch(() => {}); } }).catch(() => {});
     listRefunds({}).then((r: any) => { if (r && r.ok) setRefunds(r.rows); }).catch(() => {});
   }, [params.id]);
@@ -60,6 +68,12 @@ export default function AdminOrder({ params }: { params: { id: string } }) {
       if (m && m.ok) setMsgs(m.messages);
     }
   };
+  // Keep the chat fresh while this order is open (customer replies show up here).
+  useEffect(() => {
+    if (!orderId && !pendingId) return;
+    const t = setInterval(() => { reloadMsgs(); }, 15000);
+    return () => clearInterval(t);
+  }, [orderId, pendingId]);
   const act = async (kind: string) => {
     if (busy) return;
     const expected = figures ? n(figures.expectedTotal) : n(o.total);
@@ -119,8 +133,17 @@ export default function AdminOrder({ params }: { params: { id: string } }) {
   </div>
   <div className="twocol">
     <div className="card"><div className="small" style={{ fontWeight: 700 }}>CUSTOMER RECEIPT</div>
-      {proofUrl ? <img src={proofUrl} alt="payment receipt — tap to enlarge" onClick={() => { setZoom(1); setLight(true); }} style={{ width: '100%', borderRadius: 10, cursor: 'zoom-in' }} /> : <div className="empty">No receipt uploaded yet.</div>}
-      {proofUrl && <div className="small">Tap the receipt to open it full screen.</div>}
+      {proofUrl && !proofBroken ? (<div>
+        <img src={proofUrl} alt="payment receipt — tap to enlarge" onClick={openReceipt} onError={() => setProofBroken(true)} style={{ width: '100%', maxHeight: 380, objectFit: 'contain', borderRadius: 10, cursor: 'zoom-in', border: '1px solid var(--line)', background: '#FDF6EE' }} />
+        <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+          <button className="btn-s" onClick={openReceipt}>🔍 Open full screen</button>
+          <a className="btn-s" href={proofUrl} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>Open in new tab</a>
+        </div>
+      </div>) : (
+        <div className="empty">{proofLegacy ? 'This old receipt was stored on the previous host and the file is no longer available. Ask the customer to send a new photo in the chat.' : proofBroken ? 'The receipt photo could not be opened. Tap “Try again” — if it still fails, ask the customer to resend it.' : 'No receipt uploaded yet.'}
+          <div style={{ marginTop: 8 }}><button className="btn-s" onClick={openReceipt}>Try again</button></div>
+        </div>
+      )}
     </div>
     <div>
       {!orderId && (<div className="card"><div className="small" style={{ fontWeight: 700 }}>WHAT DID YOU SEE IN YOUR BANK?</div>
@@ -171,7 +194,7 @@ export default function AdminOrder({ params }: { params: { id: string } }) {
       {refunds.map((r) => <div key={r.id} className="small">#{r.id} {r.kind} ₦{Number(r.amount).toLocaleString()} {r.bank_name} {r.account_number} {r.account_name} [{r.status}] <button className="btn-s" onClick={async () => { await decideRefund({ id: r.id, approve: true, admin: 'owner' }); setRefunds(refunds.filter((x) => x.id !== r.id)); }}>Approve</button> <button className="btn-d" onClick={async () => { await decideRefund({ id: r.id, approve: false, admin: 'owner' }); setRefunds(refunds.filter((x) => x.id !== r.id)); }}>Decline</button></div>)}
     </div>)}
     {light && proofUrl && (<div onClick={() => setLight(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.9)', zIndex: 100, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
-      <div style={{ maxWidth: '100%', maxHeight: '85vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}><img src={proofUrl} alt="receipt full screen" style={{ width: `${Math.round(zoom * 100)}%`, maxWidth: 'none', borderRadius: 8 }} /></div>
+      <div style={{ maxWidth: '100%', maxHeight: '85vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}><img src={proofUrl} alt="receipt full screen" onError={() => { setProofBroken(true); setLight(false); toast('That receipt could not be opened. Ask the customer to resend it in the chat.'); }} style={{ width: `${Math.round(zoom * 100)}%`, maxWidth: 'none', borderRadius: 8 }} /></div>
       <div style={{ display: 'flex', gap: 8, marginTop: 10 }} onClick={(e) => e.stopPropagation()}>
         <button className="btn-s" onClick={() => setZoom((z) => Math.max(1, +(z - 0.5).toFixed(1)))}>− Zoom out</button>
         <button className="btn-s" onClick={() => setZoom((z) => Math.min(4, +(z + 0.5).toFixed(1)))}>+ Zoom in</button>

@@ -6,6 +6,9 @@ import { useEffect, useState } from 'react';
 import CartBadge from './cart-badge';
 import { seedProducts } from '../db/seed';
 import { buildTree, normCat, type CatNode } from '../lib/categories';
+import { getSettings } from '../lib/shop-actions';
+import { customerInbox } from '../lib/shop-v1';
+import { notifyMe, toast } from '../lib/notify-client';
 
 // Category picking is shared with the home page: the trail is stored and the
 // home page listens for CAT_EVENT (works on any page, no reload needed).
@@ -26,15 +29,50 @@ export function readTrail(): string[] {
 export function SiteHeader() {
   const path = usePathname();
   const [logged, setLogged] = useState(false);
+  const [wa, setWa] = useState('');
   useEffect(() => {
     try { setLogged(!!JSON.parse(localStorage.getItem('lakky-customer') || '{}').token); } catch { setLogged(false); }
   }, [path]);
+  useEffect(() => {
+    getSettings().then((s: any) => { if (s && s.ok && s.whatsappNumber) setWa(String(s.whatsappNumber)); }).catch(() => {});
+  }, []);
+  // Customer side of message alerts: while any shop page is open, check for a
+  // new owner message and pop it up (in-app + browser notification).
+  useEffect(() => {
+    if (path.startsWith('/admin') || path.startsWith('/staff')) return;
+    let stop = false;
+    let last = '';
+    try { last = localStorage.getItem('lakky-msg-seen') || ''; } catch { /* ignore */ }
+    if (!last) {
+      last = new Date().toISOString();
+      try { localStorage.setItem('lakky-msg-seen', last); } catch { /* ignore */ }
+    }
+    const tick = async () => {
+      let token = '';
+      try { token = JSON.parse(localStorage.getItem('lakky-customer') || '{}').token || ''; } catch { token = ''; }
+      if (!token) return;
+      const r: any = await customerInbox({ token, sinceIso: last }).catch(() => null);
+      if (!r || !r.ok || stop) return;
+      const msgs: any[] = r.messages || [];
+      if (!msgs.length) return;
+      last = new Date().toISOString();
+      try { localStorage.setItem('lakky-msg-seen', last); } catch { /* ignore */ }
+      const m = msgs[msgs.length - 1];
+      toast(`💬 New message from the shop${m.displayId ? ' (' + m.displayId + ')' : ''}: ${m.text}`);
+      notifyMe('New message from Lakky Variety Store', m.text);
+    };
+    tick();
+    const t = setInterval(tick, 20000);
+    return () => { stop = true; clearInterval(t); };
+  }, [path]);
   if (path.startsWith('/admin') || path.startsWith('/staff')) return null;
+  const waDigits = String(wa || '').replace(/\D/g, '');
   return (
     <div className="tophead"><div className="tophead-in">
       <Link href={logged ? '/profile' : '/login'} aria-label={logged ? 'Profile' : 'Log in'} style={{ textDecoration: 'none', fontSize: 20 }}>{logged ? '👤' : '🔑'}</Link>
       <Link href="/" style={{ textDecoration: 'none' }}><span className="brand">Lakky Variety Store</span></Link>
       <span style={{ flex: 1 }} />
+      {waDigits.length >= 8 && <a href={`https://wa.me/${waDigits}?text=${encodeURIComponent('Hello Lakky Variety Store, I need help with my order.')}`} target="_blank" rel="noreferrer" aria-label="Chat with the shop on WhatsApp" title="Chat on WhatsApp" style={{ textDecoration: 'none', fontSize: 20, marginRight: 12 }}>💬</a>}
       <Link href="/cart" style={{ textDecoration: 'none', background: 'var(--plum)', color: '#fff', borderRadius: 999, padding: '8px 16px', fontWeight: 700 }}>🛒 <CartBadge /></Link>
     </div></div>
   );

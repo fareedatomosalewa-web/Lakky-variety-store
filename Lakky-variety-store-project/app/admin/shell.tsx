@@ -2,10 +2,11 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { authClient } from '../../lib/auth-client';
 import { adminInbox } from '../../lib/shop-v1';
 import { pushReady, savePushSubscription } from '../../lib/push';
+import { notifyMe, toast, askNotifyPermission } from '../../lib/notify-client';
 
 const NAV = [
   { href: '/admin', label: 'Orders' },
@@ -18,6 +19,8 @@ const VISIT_KEY = 'lakky-admin-visit';
 
 function AdminBanner() {
   const [items, setItems] = useState<any[]>([]);
+  const seen = useRef<Set<string>>(new Set());
+  const booted = useRef(false);
   const visit = () => {
     try { return localStorage.getItem(VISIT_KEY) || new Date(Date.now() - 24 * 3600000).toISOString(); } catch { return new Date(Date.now() - 24 * 3600000).toISOString(); }
   };
@@ -25,15 +28,32 @@ function AdminBanner() {
     const r: any = await adminInbox({ sinceIso: visit() }).catch(() => null);
     if (!r || !r.ok) return;
     const list: any[] = [
-      ...(r.messages || []).map((m: any) => ({ kind: 'msg', label: m.displayId, sub: `${m.name || 'Customer'}: ${String(m.text).slice(0, 80)}` })),
-      ...(r.orders || []).map((o: any) => ({ kind: 'order', label: o.displayId, sub: `${o.name || 'Customer'} — ₦${Number(o.total).toLocaleString()}` })),
-      ...(r.receipts || []).map((s: any) => ({ kind: 'receipt', label: s.displayId, sub: `${s.name || 'Customer'} claimed ₦${Number(s.amount).toLocaleString()}` })),
+      ...(r.messages || []).map((m: any) => ({ kind: 'msg', key: `msg-${m.id}`, label: m.displayId, sub: `${m.name || 'Customer'}: ${String(m.text).slice(0, 80)}`, at: m.at })),
+      ...(r.orders || []).map((o: any) => ({ kind: 'order', key: `ord-${o.displayId}`, label: o.displayId, sub: `${o.name || 'Customer'} — ₦${Number(o.total).toLocaleString()}`, at: o.at })),
+      ...(r.receipts || []).map((s: any) => ({ kind: 'receipt', key: `rcp-${s.displayId}-${s.at}`, label: s.displayId, sub: `${s.name || 'Customer'} claimed ₦${Number(s.amount).toLocaleString()}`, at: s.at })),
     ];
+    // Pop up for messages that arrived since the last check (including a
+    // message from the last 2 minutes on first load).
+    for (const it of list) {
+      if (seen.current.has(it.key)) continue;
+      const fresh = it.at && Date.now() - new Date(it.at).getTime() < 2 * 60000;
+      if (booted.current || fresh) {
+        if (it.kind === 'msg') {
+          toast(`💬 New message on ${it.label}: ${it.sub.split(': ').slice(1).join(': ')}`);
+          notifyMe(`New message — ${it.label}`, it.sub);
+        } else if (it.kind === 'order') {
+          toast(`🆕 New order ${it.label}`);
+          notifyMe(`New order ${it.label}`, it.sub);
+        }
+      }
+      seen.current.add(it.key);
+    }
+    booted.current = true;
     setItems(list.slice(0, 10));
   };
   useEffect(() => {
     check();
-    const t = setInterval(check, 25000);
+    const t = setInterval(check, 15000);
     return () => clearInterval(t);
   }, []);
   if (!items.length) return null;
@@ -55,12 +75,12 @@ function NotifyMe() {
   }, []);
   const go = async () => {
     try {
+      const perm = await askNotifyPermission();
+      if (perm === 'denied' || perm === 'blocked') { setState('blocked'); return; }
       if (!('serviceWorker' in navigator) || !('PushManager' in window)) { setState('unsupported'); return; }
       const reg = await navigator.serviceWorker.ready;
       const r: any = await pushReady().catch(() => null);
       if (!r || !r.ready || !r.publicKey) { setState('keys-missing'); return; }
-      const perm = await Notification.requestPermission();
-      if (perm !== 'granted') { setState('blocked'); return; }
       const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: r.publicKey });
       const j = sub.toJSON();
       const s: any = await savePushSubscription({ endpoint: sub.endpoint, p256dh: j.keys?.p256dh || '', auth: j.keys?.auth || '' }).catch(() => null);
@@ -70,7 +90,7 @@ function NotifyMe() {
   if (state === 'on') return <div className="small" style={{ color: '#E8CFC2' }}>🔔 This phone will buzz</div>;
   return (<div>
     <button onClick={go} style={{ background: 'rgba(255,255,255,.16)', border: 0, color: '#fff', cursor: 'pointer', textAlign: 'left', padding: '10px 12px', borderRadius: 9, fontSize: 15, fontWeight: 600, fontFamily: 'inherit', width: '100%' }}>🔔 Notify me on this phone</button>
-    {state === 'keys-missing' && <div className="small" style={{ color: '#E8CFC2' }}>Push keys not added yet — the banner above still watches.</div>}
+    {state === 'keys-missing' && <div className="small" style={{ color: '#E8CFC2' }}>Pop-ups are on for this screen. Phone push needs the free push keys added on your host (optional).</div>}
     {state === 'blocked' && <div className="small" style={{ color: '#E8CFC2' }}>Notifications blocked — allow them in your browser settings, then tap again.</div>}
     {state === 'failed' && <div className="small" style={{ color: '#E8CFC2' }}>Could not switch on — try again.</div>}
     {state === 'unsupported' && <div className="small" style={{ color: '#E8CFC2' }}>This browser can't do push — the banner above still watches.</div>}

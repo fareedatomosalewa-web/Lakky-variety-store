@@ -69,6 +69,7 @@ export async function getSettings() {
         shopHours: s.shopHours || '', announcementOn: !!s.announcementOn,
         announcementText: s.announcementText || '', socialLinks: s.socialLinks || [],
         aboutText: s.aboutText || '', helpText: s.helpText || '',
+        whatsappNumber: s.whatsappNumber || '',
       },
     };
   } catch { return { ok: false as const }; }
@@ -77,7 +78,7 @@ export async function getSettings() {
 export async function saveSettings(patch: Record<string, unknown>) {
   try {
     if (!(await requireAdminAction())) return { ok: false as const, reason: 'admin-only' };
-    const allowed = ['bankDetails', 'globalDailyFee', 'freeHoldDays', 'overpaymentThreshold', 'underpaymentExpiryDays', 'abandonDays', 'fulfilmentDays', 'pickupNote', 'stockpileFeePerDay', 'maxStockpileDays', 'creditCashMinimum', 'restockTagDays', 'newTagDays', 'reportWindowHours', 'reminderFirstDays', 'reminderEveryDays', 'pickupLocation', 'pickupReveal', 'shopHours', 'announcementOn', 'announcementText', 'socialLinks', 'aboutText', 'helpText', 'unpaidExpiryMinutes'] as const;
+    const allowed = ['bankDetails', 'globalDailyFee', 'freeHoldDays', 'overpaymentThreshold', 'underpaymentExpiryDays', 'abandonDays', 'fulfilmentDays', 'pickupNote', 'stockpileFeePerDay', 'maxStockpileDays', 'creditCashMinimum', 'restockTagDays', 'newTagDays', 'reportWindowHours', 'reminderFirstDays', 'reminderEveryDays', 'pickupLocation', 'pickupReveal', 'shopHours', 'announcementOn', 'announcementText', 'socialLinks', 'aboutText', 'helpText', 'unpaidExpiryMinutes', 'whatsappNumber'] as const;
     const clean: Record<string, unknown> = {};
     for (const k of allowed) if (patch[k] !== undefined) clean[k] = patch[k];
     if (!Object.keys(clean).length) return { ok: false as const };
@@ -350,7 +351,7 @@ export async function trackOrder(args: { displayId: string; phone: string }) {
           id: order.id, displayId: order.displayId, status: order.paymentStatus, fulfilment: order.fulfilmentStatus,
           method: order.fulfilmentMethod || (order.fulfilmentDetails as any)?.method || '',
           total: order.total, paid: order.paidAmount, hasReceipt,
-          confirmedAt: order.confirmedAt, freeUntil, extraDays, fee: extraDays * rate, rate,
+          confirmedAt: order.confirmedAt, completedAt: order.completedAt, freeUntil, extraDays, fee: extraDays * rate, rate,
         },
       };
     }
@@ -427,6 +428,6 @@ export async function getSubmissionProof(args: { ref: string }) {
     if (!last.proofUrl) return { ok: true as const, amount: last.amountClaimed, url: null };
     const { receiptViewUrl } = await import('./storage');
     const v = await receiptViewUrl(last.proofUrl);
-    return { ok: true as const, amount: last.amountClaimed, url: v.ok ? v.url : null, key: last.proofUrl };
+    return { ok: true as const, amount: last.amountClaimed, url: v.ok ? v.url : null, key: last.proofUrl, legacy: !!v.legacy };
   } catch { return { ok: false as const }; }
 }

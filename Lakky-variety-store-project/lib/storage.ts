@@ -22,10 +22,15 @@ export async function uploadReceipt(bytes: Buffer, contentType: string, ext: str
   } catch { return { ok: false }; }
 }
 
-export async function receiptViewUrl(key: string, bucket = 'payment-proofs'): Promise<{ ok: boolean; url?: string }> {
+export async function receiptViewUrl(key: string, bucket = 'payment-proofs'): Promise<{ ok: boolean; url?: string; legacy?: boolean }> {
+  // Receipts uploaded before the hosting move were saved as plain paths on the
+  // old server. Those files are unrecoverable — say so instead of showing a
+  // broken image. Anything already absolute is used as-is.
+  if (/^https?:\/\//i.test(key)) return { ok: true, url: key };
+  if (/^\/?uploads\//i.test(key)) return { ok: false, legacy: true };
   try {
     const { url, key: skey } = cfg();
-    const res = await fetch(`${url}/storage/v1/object/sign/${bucket}/${key}`, {
+    const res = await fetch(`${url}/storage/v1/object/sign/${bucket}/${encodeURIComponent(key)}`, {
       method: 'POST',
       headers: { apikey: skey, Authorization: `Bearer ${skey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ expiresIn: 900 }),
@@ -33,6 +38,9 @@ export async function receiptViewUrl(key: string, bucket = 'payment-proofs'): Pr
     if (!res.ok) return { ok: false };
     const data = (await res.json()) as { signedURL?: string };
     if (!data.signedURL) return { ok: false };
-    return { ok: true, url: url + data.signedURL };
+    // Supabase returns "/object/sign/<bucket>/<file>?token=…" — the storage
+    // prefix is required, otherwise the link 404s (the broken-image bug).
+    const signed = data.signedURL.startsWith('/storage/v1') ? data.signedURL : '/storage/v1' + data.signedURL;
+    return { ok: true, url: url + signed };
   } catch { return { ok: false }; }
 }

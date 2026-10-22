@@ -151,6 +151,7 @@ export const orders = pgTable('orders', {
   fulfilmentDetails: jsonb('fulfilment_details'),
   fulfilmentStatus: text('fulfilment_status').default('processing'),
   confirmedAt: timestamp('confirmed_at').defaultNow(),
+  completedAt: timestamp('completed_at'),
   freeUntil: date('free_until'),
   stockpileStatus: text('stockpile_status').default('held'),
   agreedAt: timestamp('agreed_at'),
@@ -214,6 +215,7 @@ export const settings = pgTable('settings', {
   socialLinks: jsonb('social_links').default([]),
   aboutText: text('about_text').default(''),
   helpText: text('help_text').default(''),
+  whatsappNumber: text('whatsapp_number').default(''),
 });
 export const notifications = pgTable('notifications', {
   id: serial('id').primaryKey(),

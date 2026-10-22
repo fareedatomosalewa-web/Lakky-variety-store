@@ -21,7 +21,8 @@ export default function AdminDash() {
   const allowed = useAdminGuard(['admin', 'staff']);
   const [items, setItems] = useState<any[]>([]);
   const [sel, setSel] = useState<number[]>([]);
-  const [q, setQ] = useState(''); const [found, setFound] = useState<any[]>([]);
+  const [q, setQ] = useState(''); const [found, setFound] = useState<any[]>([]); const [searching, setSearching] = useState(false);
+  const [shown, setShown] = useState(25);
   const [stats, setStats] = useState<any>(null);
   const [remind, setRemind] = useState<any[]>([]);
   const [fees, setFees] = useState<any[]>([]);
@@ -67,6 +68,19 @@ export default function AdminDash() {
     if (ag && ag.ok) setAged(ag.aged);
   };
   useEffect(() => { if (allowed) load(); }, [allowed]);
+  // Live search: results (and suggestions) update while typing — no Go needed.
+  useEffect(() => {
+    const text = q.trim();
+    if (text.length < 2) { setFound([]); setSearching(false); return; }
+    setSearching(true);
+    const t = setTimeout(async () => {
+      const r: any = await adminSearch({ q: text }).catch(() => null);
+      if (r && r.ok) setFound(r.rows || []);
+      setSearching(false);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q]);
+  useEffect(() => { setShown(25); }, [tab]);
   if (!allowed) return <div className="card">Checking admin session…</div>;
   const toggle = (id: number) => setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   const bulk = async (to: string) => {
@@ -74,10 +88,7 @@ export default function AdminDash() {
     await setProgress({ ids: sel, to, actor: 'owner' }).catch(() => null);
     setSel([]); load();
   };
-  const search = async () => {
-    const r: any = await adminSearch({ q }).catch(() => null);
-    if (r && r.ok) setFound(r.rows);
-  };
+  const firstHit = () => { if (found.length) location.href = `/admin/orders/${encodeURIComponent(found[0].displayId)}`; };
   const csv = async (what: string) => {
     const r: any = await exportCsv({ what }).catch(() => null);
     if (r && r.ok && r.csv) {
@@ -88,8 +99,11 @@ export default function AdminDash() {
   const review = items.filter((o) => o.status === 'pending');
   const under = items.filter((o) => o.status !== 'pending');
   const week = confirmed.filter((o) => Date.now() - new Date(o.at || Date.now()).getTime() < 7 * 86400000);
-  const received = week.reduce((s, o) => s + Number(o.total || 0), 0);
+  // Same definition as Reports → "Money received": what actually landed in the
+  // bank (paid_amount), not what was expected (total).
+  const received = week.reduce((s, o) => s + Number(o.paid ?? 0), 0);
   const rows = tab === 'review' ? review : tab === 'under' ? under : tab === 'completed' ? confirmed.filter((o) => o.st === 'completed') : tab === 'confirmed' ? confirmed.filter((o) => o.st !== 'completed') : tab === 'ready' ? confirmed.filter((o) => o.st === 'ready' || o.st === 'onway') : confirmed.filter((o) => o.st === 'rejected' || o.st === 'cancelled');
+  const visible = rows.slice(0, shown);
   const quick = async () => {
     if (!pop) return;
     if (pop.mode === 'confirm') {
@@ -103,20 +117,37 @@ export default function AdminDash() {
     }
   };
   return (<AdminShell><h2>Orders</h2>
-    <div className="searchbar"><span aria-hidden="true">🔍</span><input placeholder="Order ID, name, phone or last 4…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') search(); }} /><button className="btn-s" onClick={search}>Go</button></div>
-    {found.length > 0 && <div className="card">{found.map((o) => <div key={o.id} className="small"><a href={`/admin/orders/${o.displayId}`}>{o.displayId}</a> • {o.name} • {o.phone} • {o.pay} • {o.st}</div>)}</div>}
+    <div className="card" style={{ padding: 10 }}>
+      <div className="searchbar" style={{ margin: 0 }}>
+        <span aria-hidden="true">🔍</span>
+        <input placeholder="Type Order ID, customer name or phone…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') firstHit(); }} />
+        {q && <button className="btn-s" onClick={() => setQ('')} aria-label="Clear search">Clear ✕</button>}
+      </div>
+      {q.trim().length >= 2 && (<div style={{ marginTop: 8 }}>
+        <div className="small">{searching ? 'Searching…' : found.length ? `${found.length} match${found.length > 1 ? 'es' : ''} — tap one to open` : 'No matches. Try an Order ID, name or phone number.'}</div>
+        {found.map((o: any, i: number) => (
+          <a key={`${o.kind}-${o.rowId}-${i}`} href={`/admin/orders/${encodeURIComponent(o.displayId)}`} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '9px 4px', borderBottom: '1px solid var(--line)', textDecoration: 'none', color: 'inherit' }}>
+            <span className={o.kind === 'pending' ? 'badge badge-err' : 'badge badge-ok'}>{o.kind === 'pending' ? 'Not confirmed' : 'Order'}</span>
+            <b style={{ overflowWrap: 'anywhere' }}>{o.displayId}</b>
+            <span className="small" style={{ flex: 1, minWidth: 0 }}>{o.name || 'Customer'} • {o.phone || 'no phone'} • {o.status}</span>
+            <span className="small">₦{Number(o.total || 0).toLocaleString()}</span>
+            <span aria-hidden="true">›</span>
+          </a>
+        ))}
+      </div>)}
+    </div>
     <div className="sumgrid">
       <div className="sumcard"><div className="t">TO REVIEW</div><div className="n" style={{ color: '#B7791F' }}>{review.length}</div></div>
       <div className="sumcard"><div className="t">UNDERPAID</div><div className="n" style={{ color: 'var(--red)' }}>{under.length}</div></div>
       <div className="sumcard"><div className="t">CONFIRMED THIS WEEK</div><div className="n" style={{ color: 'var(--green)' }}>{week.length}</div></div>
-      <div className="sumcard"><div className="t">RECEIVED THIS WEEK</div><div className="n">₦{received.toLocaleString()}</div></div>
+      <div className="sumcard"><div className="t">RECEIVED THIS WEEK</div><div className="n">₦{received.toLocaleString()}</div><div className="small">Money actually received (last 7 days). Reports uses the same definition for the dates you choose.</div></div>
     </div>
     <div className="catchips" style={{ marginTop: 10 }}>
       {[['review', `To review (${review.length})`], ['under', `Underpaid (${under.length})`], ['confirmed', 'Confirmed'], ['ready', 'Ready'], ['completed', 'Completed'], ['rejected', 'Rejected']].map(([t, label]) => <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{label}</button>)}
     </div>
     <div className="tablewrap"><table>
       <thead><tr><th></th><th>ORDER ID</th><th>CUSTOMER</th><th>SUBMITTED</th><th>EXPECTED</th><th>CLAIMED</th><th>RECEIPT</th><th>STATUS</th><th></th></tr></thead>
-      <tbody>{rows.map((o) => <tr key={o.id || o.displayId}>
+      <tbody>{visible.map((o) => <tr key={o.id || o.displayId}>
         <td data-th="Pick"><input type="checkbox" checked={sel.includes(o.id)} onChange={() => toggle(o.id)} /></td>
         <td data-th="Order ID"><b style={{ overflowWrap: 'anywhere' }}>{o.displayId || o.ref}</b>{Number(o.unread || 0) > 0 && <div><span className="badge badge-err">💬 New message{Number(o.unread) > 1 ? ` (${o.unread})` : ''}</span></div>}</td>
         <td data-th="Customer">{o.name}<br /><span className="mask">{mask(o.phone)}</span>{o.method ? ` · ${o.method}` : ''}</td>
@@ -128,6 +159,7 @@ export default function AdminDash() {
         <td data-th="Open"><a className="btn" style={{ textDecoration: 'none', padding: '8px 14px', minHeight: 0 }} href={`/admin/orders/${o.displayId || o.ref}`}>Review</a> <button className="btn-s" onClick={() => { setPop({ mode: 'confirm', ref: o.displayId || o.ref }); setPopMsg(''); }}>✓</button> <button className="btn-d" onClick={() => { setPop({ mode: 'reject', ref: o.displayId || o.ref }); setPopMsg(''); }}>✕</button></td>
       </tr>)}</tbody>
     </table></div>
+    {rows.length > visible.length && (<div style={{ textAlign: 'center', margin: '10px 0' }}><button className="btn-s" onClick={() => setShown((n) => n + 25)}>Load 25 more ({rows.length - visible.length} left)</button></div>)}
     {rows.length === 0 && <div className="empty">Nothing here.</div>}
     {pop && (<div className="card"><h3>{pop.mode === 'confirm' ? 'Have you seen this payment in our bank?' : 'Reject this order?'}</h3>
       {pop.mode === 'reject' && <div><select value={popReason} onChange={(e) => setPopReason(e.target.value)}>{['Underpayment', 'Fake receipt', 'Wrong order'].map((r) => <option key={r} value={r}>{r}</option>)}</select></div>}

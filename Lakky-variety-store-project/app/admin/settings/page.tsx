@@ -3,11 +3,12 @@ import { useEffect, useState } from 'react';
 import { seedSettings } from '../../../db/seed';
 import { useAdminGuard } from '../../../lib/use-admin-guard';
 import { getSettings, saveSettings } from '../../../lib/shop-actions';
+import { toast } from '../../../lib/notify-client';
 const DEFAULTS: any = {
   ...seedSettings, stockpileFeePerDay: 50, maxStockpileDays: 60, creditCashMinimum: 5000,
   restockTagDays: 2, newTagDays: 7, reportWindowHours: 48, reminderFirstDays: 2, reminderEveryDays: 2,
   pickupLocation: '', pickupReveal: false, shopHours: '', announcementOn: false, announcementText: '',
-  socialLinks: [], aboutText: '', helpText: '', unpaidExpiryMinutes: 30,
+  socialLinks: [], aboutText: '', helpText: '', unpaidExpiryMinutes: 30, whatsappNumber: '',
 };
 export default function AdminSettings() {
   const allowed = useAdminGuard();
@@ -22,12 +23,12 @@ export default function AdminSettings() {
     });
   }, []);
   const save = async () => {
-    const keys = ['bankDetails', 'globalDailyFee', 'freeHoldDays', 'overpaymentThreshold', 'underpaymentExpiryDays', 'abandonDays', 'fulfilmentDays', 'pickupNote', 'stockpileFeePerDay', 'maxStockpileDays', 'creditCashMinimum', 'restockTagDays', 'newTagDays', 'reportWindowHours', 'reminderFirstDays', 'reminderEveryDays', 'pickupLocation', 'pickupReveal', 'shopHours', 'announcementOn', 'announcementText', 'socialLinks', 'aboutText', 'helpText', 'unpaidExpiryMinutes'];
+    const keys = ['bankDetails', 'globalDailyFee', 'freeHoldDays', 'overpaymentThreshold', 'underpaymentExpiryDays', 'abandonDays', 'fulfilmentDays', 'pickupNote', 'stockpileFeePerDay', 'maxStockpileDays', 'creditCashMinimum', 'restockTagDays', 'newTagDays', 'reportWindowHours', 'reminderFirstDays', 'reminderEveryDays', 'pickupLocation', 'pickupReveal', 'shopHours', 'announcementOn', 'announcementText', 'socialLinks', 'aboutText', 'helpText', 'unpaidExpiryMinutes', 'whatsappNumber'];
     const patch: any = {};
     for (const k of keys) patch[k] = (s as any)[k];
     const r: any = await saveSettings(patch);
     localStorage.setItem('lakky-settings', JSON.stringify(s));
-    alert(r.ok ? 'Saved to Supabase (live).' : 'Saved locally only — Supabase unreachable, will retry.');
+    toast(r.ok ? 'Settings saved.' : 'Saved on this device only — we could not reach the database. Try again.');
     if (r.ok) setSrc('Supabase (live)');
   };
   const num = (k: string) => <input type="number" value={Number((s as any)[k] ?? 0)} onChange={e=>setS({...s,[k]:Number(e.target.value)})} />;
@@ -53,6 +54,8 @@ export default function AdminSettings() {
     <div>Pickup location (hidden unless revealed){txt('pickupLocation', 'One pickup point')}</div>
     {chk('pickupReveal', 'Show pickup location to customers')}
     <div>Shop opening hours{txt('shopHours', 'e.g. Mon–Sat, 9am–6pm')}</div>
+    <div>WhatsApp number for the chat button{txt('whatsappNumber', 'e.g. +2348012345678')}</div>
+    <div className="small">This shows a 💬 WhatsApp button in the shop header. Leave empty to hide it. Use the number customers should chat with.</div>
     {chk('announcementOn', 'Show announcement banner')}
     <div>Announcement text{txt('announcementText', 'e.g. Closed on public holidays')}</div>
     <div>Social links (one per line: name | url)<textarea placeholder="" value={((s as any).socialLinks || []).join('\n')} onChange={(e) => setS({ ...s, socialLinks: e.target.value.split('\n').map((l) => l.trim()).filter(Boolean) })} /></div>
