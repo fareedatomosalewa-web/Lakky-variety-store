@@ -99,6 +99,18 @@ export const customers = pgTable('customers', {
   email: text('email'),
   passwordHash: text('password_hash'),
   creditBalance: integer('credit_balance').default(0),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+export const customerPasswordResets = pgTable('customer_password_resets', {
+  id: serial('id').primaryKey(),
+  customerId: integer('customer_id').notNull().references(() => customers.id, { onDelete: 'cascade' }),
+  codeHash: text('code_hash').notNull(),
+  expiresAt: timestamp('expires_at').notNull(),
+  attemptsUsed: integer('attempts_used').default(0),
+  verifiedAt: timestamp('verified_at'),
+  usedAt: timestamp('used_at'),
+  createdAt: timestamp('created_at').defaultNow(),
 });
 
 // Pending (never fulfilable, never reserves stock)
