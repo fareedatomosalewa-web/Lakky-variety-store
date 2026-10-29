@@ -4,6 +4,7 @@ import { db } from './db';
 import { normalizePhone, last4 } from './phone';
 import { customers, pendingRefs, pendingItems, paymentSubmissions, orders, orderItems, variantSkus, addons, settings } from '../db/schema';
 import { eq, or, sql as dsql } from 'drizzle-orm';
+import { seedSettings } from '../db/seed';
 
 // v1.7 Supabase slice: shop data lives in Supabase. Every action returns
 // { ok } or { ok:false } so pages can fall back to the local demo flow.
@@ -48,18 +49,42 @@ async function requireStaffAction(): Promise<boolean> {
   }
 }
 
+async function ensureSettingsRow() {
+  const existing = await db.select({ id: settings.id }).from(settings).limit(1);
+  if (existing.length) return existing[0].id;
+
+  const defaults = {
+    ...seedSettings,
+    fulfilmentDays: Array.isArray(seedSettings.fulfilmentDays) ? seedSettings.fulfilmentDays : ['Mon', 'Thu', 'Sat'],
+    pickupLocation: '',
+    pickupReveal: false,
+    shopHours: '',
+    announcementOn: false,
+    announcementText: '',
+    socialLinks: [],
+    aboutText: '',
+    helpText: '',
+    whatsappNumber: '',
+    unpaidExpiryMinutes: 30,
+  } as any;
+
+  const inserted = await db.insert(settings).values(defaults).returning({ id: settings.id });
+  return inserted[0].id;
+}
+
 // ---- 1. Settings (bank, days, note, fees) ----
 export async function getSettings() {
   try {
+    await ensureSettingsRow();
     const rows = await db.select().from(settings).limit(1);
     if (!rows.length) return { ok: false as const };
     const s = rows[0] as any;
     return {
       ok: true as const,
       settings: {
-        bankDetails: s.bankDetails, globalDailyFee: s.globalDailyFee, freeHoldDays: s.freeHoldDays,
+        bankDetails: s.bankDetails || seedSettings.bankDetails, globalDailyFee: s.globalDailyFee, freeHoldDays: s.freeHoldDays,
         overpaymentThreshold: s.overpaymentThreshold, underpaymentExpiryDays: s.underpaymentExpiryDays,
-        abandonDays: s.abandonDays, fulfilmentDays: s.fulfilmentDays, pickupNote: s.pickupNote,
+        abandonDays: s.abandonDays, fulfilmentDays: s.fulfilmentDays || seedSettings.fulfilmentDays, pickupNote: s.pickupNote || seedSettings.pickupNote,
         stockpileFeePerDay: s.stockpileFeePerDay ?? 50, maxStockpileDays: s.maxStockpileDays ?? 60,
         creditCashMinimum: s.creditCashMinimum ?? 5000, restockTagDays: s.restockTagDays ?? 2,
         newTagDays: s.newTagDays ?? 7, reportWindowHours: s.reportWindowHours ?? 48,
@@ -78,13 +103,12 @@ export async function getSettings() {
 export async function saveSettings(patch: Record<string, unknown>) {
   try {
     if (!(await requireAdminAction())) return { ok: false as const, reason: 'admin-only' };
-    const allowed = ['bankDetails', 'globalDailyFee', 'freeHoldDays', 'overpaymentThreshold', 'underpaymentExpiryDays', 'abandonDays', 'fulfilmentDays', 'pickupNote', 'stockpileFeePerDay', 'maxStockpileDays', 'creditCashMinimum', 'restockTagDays', 'newTagDays', 'reportWindowHours', 'reminderFirstDays', 'reminderEveryDays', 'pickupLocation', 'pickupReveal', 'shopHours', 'announcementOn', 'announcementText', 'socialLinks', 'aboutText', 'helpText', 'unpaidExpiryMinutes', 'whatsappNumber'] as const;
+    const allowed = ['bankDetails', 'globalDailyFee', 'freeHoldDays', 'overpaymentThreshold', 'underpaymentExpiryDays', 'abandonDays', 'fulfilmentDays', 'pickupNote', 'stockpileFeePerDay', 'maxStockpileDays', 'creditCashMinimum', 'restockTagDays', 'newTagDays', 'reportWindowHours', 'reminderFirstDays', 'reminderEveryDays', 'pickupLocation', 'pickupReveal', 'unpaidExpiryMinutes', 'shopHours', 'announcementOn', 'announcementText', 'socialLinks', 'aboutText', 'helpText', 'whatsappNumber'];
     const clean: Record<string, unknown> = {};
     for (const k of allowed) if (patch[k] !== undefined) clean[k] = patch[k];
     if (!Object.keys(clean).length) return { ok: false as const };
-    const rows = await db.select({ id: settings.id }).from(settings).limit(1);
-    if (!rows.length) return { ok: false as const };
-    await db.update(settings).set(clean as any).where(eq(settings.id, rows[0].id));
+    const id = await ensureSettingsRow();
+    await db.update(settings).set(clean as any).where(eq(settings.id, id));
     return { ok: true as const };
   } catch { return { ok: false as const }; }
 }
@@ -128,7 +152,7 @@ export async function createPending(args: {
       const dup: any = await db.execute(dsql`select id, ref, display_id as "displayId", expected_total as "expectedTotal", credit_applied as "creditApplied" from pending_refs where idempotency_key = ${args.idemKey} limit 1`);
       const drows = dup.rows || dup;
       if (drows.length) {
-        return { ok: true as const, ref: drows[0].ref, displayId: drows[0].displayId, pendingId: drows[0].id, total: Number(drows[0].expectedTotal), creditUsed: Number(drows[0].creditApplied || 0), duplicate: true as const };
+        return { ok: true as const, ref: drows[0].ref, displayId: drows[0].displayId, pendingId: drows[0].id, total: Number(drows[0].expectedTotal), creditUsed: Number(drows[0].creditApplied || 0) };
       }
     }
     // One Order ID, assigned at submit (LVS format). No Reference IDs anywhere.
@@ -303,7 +327,7 @@ export async function confirmOrder(args: { pendingRef: string; verifiedAmount: n
           qty: line.qty, unitPriceSnapshot: line.unitPriceSnapshot,
         } as any);
       }
-            await tx.update(pendingRefs).set({ status: 'confirmed' } as any).where(eq(pendingRefs.id, pend.id));
+      await tx.update(pendingRefs).set({ status: 'confirmed' } as any).where(eq(pendingRefs.id, pend.id));
       const over = paid > expected ? paid - expected : 0;      if (over > 0) {
         await tx.execute(dsql`insert into credit_ledger (customer_id, order_id, amount, reason) values (${pend.customerId}, ${orderId}, ${over}, 'overpayment auto-credit')`);
         await tx.execute(dsql`update customers set credit_balance = coalesce(credit_balance,0) + ${over} where id = ${pend.customerId}`);
@@ -311,8 +335,8 @@ export async function confirmOrder(args: { pendingRef: string; verifiedAmount: n
       if (pend.couponCode) {
         await tx.execute(dsql`update coupons set used = used + 1 where code = ${pend.couponCode}`);
       }
-      await tx.execute(dsql`insert into notifications (customer_id, order_id, type, message) values (${pend.customerId}, ${orderId}, 'confirmed', ${over > 0 ? 'Order ' + displayId + ' confirmed. You paid ₦' + over.toLocaleString() + ' extra — open your order to keep it as store credit or ask for a refund.' : 'Order ' + displayId + ' confirmed.'})`);
-      await tx.execute(dsql`insert into order_messages (order_id, sender, text) values (${orderId}, 'owner', ${over > 0 ? 'Payment confirmed. You paid extra (' + '₦' + over.toLocaleString() + ') — reply here: keep as store credit, or send your bank details for a refund.' : 'Payment confirmed. Order is being prepared.'})`);
+      await tx.execute(dsql`insert into notifications (customer_id, order_id, type, message) values (${pend.customerId}, ${orderId}, 'confirmed', ${over > 0 ? 'Order ' + displayId + ' confirmed. You paid extra: ₦' + over.toLocaleString() : 'Order ' + displayId + ' confirmed.'})`);
+      await tx.execute(dsql`insert into order_messages (order_id, sender, text) values (${orderId}, 'owner', ${over > 0 ? 'Payment confirmed. You paid extra (' + '₦' + over.toLocaleString() + '), which was moved into credit.' : 'Payment confirmed.'})`);
       return { ok: true as const, displayId, over };
     });
   } catch (e: any) {
