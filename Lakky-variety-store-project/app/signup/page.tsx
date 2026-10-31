@@ -23,7 +23,8 @@ export default function SignUpPage() {
     if (!r || !r.ok) {
       setErr(
         r?.reason === 'email-used' ? 'That email already has an account. Log in instead, or use Forgot password.'
-          : r?.reason === 'phone-used' ? 'That phone number already has an account. Log in with your email, or use Forgot password.'
+          : r?.reason === 'admin-email' ? 'That email is reserved for the shop owner and cannot be used for a customer account. Please use a different email.'
+            : r?.reason === 'phone-used' ? 'That phone number already has an account. Log in with your email, or use Forgot password.'
             : r?.reason === 'bad-email' ? 'That email does not look right. Check it and try again.'
               : r?.reason === 'bad-phone' ? 'Please enter a full phone number, like +2348012345678.'
                 : r?.reason === 'missing' ? 'Please fill name, phone, email and a password of 6+ characters.'

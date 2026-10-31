@@ -664,6 +664,10 @@ export async function signUpCustomer(args: { name: string; phone: string; email:
     const pdigits = phone.replace(/\D/g, '');
     if (!name || pdigits.length < 8 || !email || !args.password || args.password.length < 6) { await sql.end(); return { ok: false as const, reason: 'missing' }; }
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { await sql.end(); return { ok: false as const, reason: 'bad-email' }; }
+    // The owner's admin email can never become a customer account (owner rule).
+    // Admin accounts live in the auth "user" table, not in customers.
+    const isAdmin = await sql`select id from "user" where lower(email)=${email} and role='admin' limit 1`;
+    if (isAdmin.length) { await sql.end(); return { ok: false as const, reason: 'admin-email' }; }
     const dupE = await sql`select id from customers where lower(email)=${email} limit 1`;
     if (dupE.length) { await sql.end(); return { ok: false as const, reason: 'email-used' }; }
     // Compare the last 10 digits so +234…, 234… and 0… are the same phone.
@@ -690,6 +694,10 @@ export async function signInCustomer(args: { email: string; password: string }) 
     const sql = conn();
     const email = String(args.email || '').trim().toLowerCase();
     if (!email || !args.password) { await sql.end(); return { ok: false as const, reason: 'missing' }; }
+    // Admin accounts are NOT customers: send the owner to the admin login instead
+    // of the misleading "no account uses that email" message.
+    const admin = await sql`select id from "user" where lower(email)=${email} and role='admin' limit 1`;
+    if (admin.length) { await sql.end(); return { ok: false as const, reason: 'admin-account' }; }
     const rows = await sql`select * from customers where lower(email)=${email} limit 1`;
     if (!rows.length) { await sql.end(); return { ok: false as const, reason: 'no-account' }; }
     if (!rows[0].password_hash) { await sql.end(); return { ok: false as const, reason: 'no-password' }; }

@@ -3,7 +3,8 @@ import { useState } from 'react';
 import { signInCustomer } from '../../lib/shop-v1';
 const MESSAGES: Record<string, string> = {
   missing: 'Please enter your email and password.',
-  'no-account': 'No account uses that email. Check the spelling, or create an account.',
+  'no-account': 'No customer account uses that email. Check the spelling, or create an account.',
+  'admin-account': 'That email is the shop owner’s ADMIN email. Customer login cannot use it — please use the Admin sign-in page instead.',
   'no-password': 'This account has no password yet (it was created in the shop). Use “Forgot password” with the email and phone on your account.',
   'wrong-password': 'That password is not correct. Try again, or use “Forgot password”.',
   error: 'We could not log you in just now. Please try again.',
@@ -33,5 +34,6 @@ export default function LoginPage() {
     <div className="small" style={{ marginTop: 10 }}><a href="/forgot">Forgot password?</a></div>
     <div className="small" style={{ marginTop: 6 }}>New here? <a href="/signup">Create an account</a>.</div>
     <div className="small">Old account from the shop? If you never set a password, use <a href="/reset">Forgot password</a> with the same email and phone number we have for you.</div>
+    <div className="small" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #eee' }}>Shop owner? <a href="/admin/login"><b>Admin sign-in</b></a> (separate password).</div>
   </div>);
 }

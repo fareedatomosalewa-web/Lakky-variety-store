@@ -8,6 +8,14 @@ export function authOptions(database: typeof dbType, tables: typeof authTables):
   return {
     database: drizzleAdapter(database, { provider: 'pg', schema: tables }),
     emailAndPassword: { enabled: true, disableSignUp: true },
+    // Vercel Preview builds get a new hostname on every deploy. Without this,
+    // the admin sign-in request is rejected as an "invalid origin" on Preview.
+    trustedOrigins: [
+      'http://localhost:3000',
+      'https://*.vercel.app',
+      ...(process.env.BETTER_AUTH_URL ? [process.env.BETTER_AUTH_URL] : []),
+      ...(process.env.NEXT_PUBLIC_APP_URL ? [process.env.NEXT_PUBLIC_APP_URL] : []),
+    ],
     user: {
       additionalFields: {
         role: { type: 'string', defaultValue: 'customer', input: false },

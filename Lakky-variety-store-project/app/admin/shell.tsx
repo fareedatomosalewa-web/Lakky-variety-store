@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { authClient } from '../../lib/auth-client';
 import { adminInbox } from '../../lib/shop-v1';
@@ -100,17 +100,17 @@ function NotifyMe() {
 
 export default function AdminShell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
-  const router = useRouter();
   const out = async () => {
     try { await authClient.signOut(); } catch { /* ignore */ }
-    router.replace('/admin/login');
+    try { localStorage.removeItem('lakky-admin-visit'); } catch { /* ignore */ }
+    location.replace('/admin/login');
   };
   return (<div className="adminwrap">
     <aside className="sidebar">
       <div className="brand" style={{ color: '#fff' }}>Lakky Admin</div>
       <nav>
         {NAV.map((n) => <Link key={n.href} href={n.href} className={path === n.href ? 'on' : ''}>{n.label}</Link>)}
-        <button onClick={out} style={{ background: 'none', border: 0, color: '#E8CFC2', cursor: 'pointer', textAlign: 'left', padding: '10px 12px', fontSize: 15, fontFamily: 'inherit' }}>Log out</button>
+        <button onClick={out} style={{ marginTop: 10, background: 'rgba(255,255,255,.10)', border: '1px solid rgba(255,255,255,.28)', color: '#fff', cursor: 'pointer', textAlign: 'left', padding: '10px 12px', fontSize: 15, fontWeight: 700, fontFamily: 'inherit', borderRadius: 9 }}>Log out</button>
       </nav>
       <div style={{ marginTop: 10 }}><NotifyMe /></div>
     </aside>

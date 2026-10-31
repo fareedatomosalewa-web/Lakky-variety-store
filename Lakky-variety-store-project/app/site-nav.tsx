@@ -72,6 +72,14 @@ export function SiteHeader() {
       <Link href={logged ? '/profile' : '/login'} aria-label={logged ? 'Profile' : 'Log in'} style={{ textDecoration: 'none', fontSize: 20 }}>{logged ? '👤' : '🔑'}</Link>
       <Link href="/" style={{ textDecoration: 'none' }}><span className="brand">Lakky Variety Store</span></Link>
       <span style={{ flex: 1 }} />
+      {logged && (
+        <button
+          onClick={() => { try { localStorage.removeItem('lakky-customer'); } catch { /* ignore */ } location.href = '/'; }}
+          aria-label="Log out"
+          title="Log out"
+          style={{ background: 'transparent', border: '1px solid rgba(0,0,0,.18)', borderRadius: 999, padding: '6px 12px', marginRight: 8, fontWeight: 700, fontSize: 13, cursor: 'pointer', color: 'inherit', fontFamily: 'inherit' }}
+        >Log out</button>
+      )}
       {waDigits.length >= 8 && <a href={`https://wa.me/${waDigits}?text=${encodeURIComponent('Hello Lakky Variety Store, I need help with my order.')}`} target="_blank" rel="noreferrer" aria-label="Chat with the shop on WhatsApp" title="Chat on WhatsApp" style={{ textDecoration: 'none', fontSize: 20, marginRight: 12 }}>💬</a>}
       <Link href="/cart" style={{ textDecoration: 'none', background: 'var(--plum)', color: '#fff', borderRadius: 999, padding: '8px 16px', fontWeight: 700 }}>🛒 <CartBadge /></Link>
     </div></div>
@@ -131,6 +139,7 @@ const tabs = [
   { href: '/wishlist', label: 'Wishlist', icon: '🤍', match: (p: string) => p.startsWith('/wishlist') },
   { href: '/cart', label: 'Cart', icon: '🛒', match: (p: string) => p === '/cart' },
   { href: '/orders', label: 'Track', icon: '📦', match: (p: string) => p.startsWith('/orders') },
+  { href: '/profile', label: 'Profile', icon: '👤', match: (p: string) => p.startsWith('/profile') },
 ];
 
 export function BottomNav() {

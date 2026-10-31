@@ -23,6 +23,9 @@ export default function ProfilePage() {
       <div><a href="/wishlist">Saved items →</a></div>
       <div><a href="/notifications">Notifications →</a></div>
     </div>
-    <div className="card"><button className="btn-s" onClick={out}>Log out</button></div>
+    <div className="card">
+      <button className="btn" style={{ width: '100%', background: '#8a1f1f' }} onClick={() => { if (window.confirm('Log out of your customer account on this phone?')) out(); }}>Log out</button>
+      <div className="small" style={{ marginTop: 6 }}>You will need your email and password to log back in.</div>
+    </div>
   </div>);
 }
