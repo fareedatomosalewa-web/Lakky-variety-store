@@ -1,6 +1,6 @@
 // Lakky PWA shell: cache the shop shell + images, serve offline where possible.
 // Push arrives with the PWA step keys (see docs; VAPID setup is a later version).
-const CACHE = 'lakky-v1';
+const CACHE = 'lakky-v2';
 const SHELL = ['/', '/manifest.json', '/icon-192.png', '/icon-512.png'];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -21,7 +21,7 @@ self.addEventListener('fetch', (e) => {
 self.addEventListener('push', (e) => {
   let title = 'Lakky Variety Store';
   let body = 'You have an update';
-  let url = '/admin';
+  let url = '/';
   try {
     const d = e.data ? e.data.json() : null;
     if (d) {
@@ -36,6 +36,6 @@ self.addEventListener('push', (e) => {
 });
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  const url = (e.notification.data && e.notification.data.url) || '/admin';
+  const url = (e.notification.data && e.notification.data.url) || '/';
   e.waitUntil(clients.openWindow(url));
 });

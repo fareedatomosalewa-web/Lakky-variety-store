@@ -47,7 +47,8 @@ async function requireAdminAction(): Promise<boolean> {
     const s = await getAdminSession();
     return !!s.ok;
   } catch {
-    return true;
+    // Fail closed: if we cannot prove this is the owner, deny.
+    return false;
   }
 }
 function hashPw(pw: string, salt: string): string {
@@ -402,7 +403,13 @@ export async function postMessage(args: { orderId?: number; pendingId?: number; 
       } catch { /* notify best-effort */ }
       if (cid) {
         const off = await sql`select id from notification_prefs where customer_id=${cid} and type='message' and off=true limit 1`.catch(() => []);
-        if (!off.length) await sql`insert into notifications (customer_id, order_id, type, message) values (${cid}, ${oid}, 'message', ${t.slice(0, 200)})`.catch(() => null);
+        if (!off.length) {
+          await sql`insert into notifications (customer_id, order_id, type, message) values (${cid}, ${oid}, 'message', ${t.slice(0, 200)})`.catch(() => null);
+          try {
+            const { sendCustomerPush } = await import('./customer-push');
+            await sendCustomerPush({ customerId: cid, title: 'Message from the shop', body: t, url: '/orders' });
+          } catch { /* push best-effort */ }
+        }
       }
     } else {
       const detail = args.orderId ? `order:${args.orderId}` : `pending:${args.pendingId}`;
@@ -525,17 +532,42 @@ export async function cancelOrder(args: { orderId: number; phone: string; reason
 
 // ---- fulfilment progress + who-completed + reminders due ----
 const FLOW = ['pending', 'confirmed', 'packaged', 'onway', 'ready', 'completed'];
+const PROGRESS_LABEL: Record<string, string> = {
+  pending: 'being checked', confirmed: 'confirmed', packaged: 'packed',
+  onway: 'on the way', ready: 'ready for pickup', completed: 'completed',
+};
 export async function setProgress(args: { ids: number[]; to: string; actor: string }) {
   try {
     // ADMIN-GATED:setProgress
     if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
     if (!FLOW.includes(args.to) || !args.ids.length) { await sql.end(); return { ok: false as const }; }
+    const pushes: { customerId: number; message: string }[] = [];
     for (const id of args.ids.slice(0, 100)) {
-      await sql`update orders set fulfilment_status=${args.to} where id=${id}`;
+      const upd = await sql`update orders set fulfilment_status=${args.to} where id=${id} returning customer_id as cid, display_id as "displayId", order_number as "serial"`;
       await sql`insert into order_events (order_id, actor, action) values (${id}, ${args.actor}, ${'status->' + args.to})`;
+      const row: any = upd[0];
+      if (!row) continue;
+      const label = row.displayId || ('#' + (row.serial ?? id));
+      const message = `Order ${label} is now: ${PROGRESS_LABEL[args.to] || args.to}`;
+      // Respect the customer's own "order updates" switch.
+      const off = await sql`select id from notification_prefs
+        where customer_id=${row.cid} and type in ('order updates','progress') and off=true limit 1`.catch(() => []);
+      if (!off.length) {
+        await sql`insert into notifications (customer_id, order_id, type, message)
+          values (${row.cid}, ${id}, 'progress', ${message})`.catch(() => null);
+        pushes.push({ customerId: row.cid, message });
+      }
     }
     await sql.end();
+    if (pushes.length) {
+      try {
+        const { sendCustomerPush } = await import('./customer-push');
+        for (const p of pushes) {
+          await sendCustomerPush({ customerId: p.customerId, title: 'Order update', body: p.message, url: '/orders' }).catch(() => null);
+        }
+      } catch { /* push best-effort */ }
+    }
     return { ok: true as const };
   } catch { return { ok: false as const }; }
 }
@@ -930,6 +962,59 @@ export async function listCustomers() {
     await sql.end();
     return { ok: true as const, rows };
   } catch { return { ok: false as const, rows: [] as any[] }; }
+}
+
+// Owner-only customer list: name, phone, email, date joined, number of orders.
+// Search matches name, phone or email. "joined" uses the account creation date
+// and falls back to the first order date for customers who joined before we
+// started recording it.
+export async function listCustomersFull(args: { search?: string } = {}) {
+  try {
+    // ADMIN-GATED:listCustomersFull
+    if (!(await requireAdminAction())) return { ok: false as const, rows: [] as any[], total: 0 };
+    const sql = conn();
+    const q = String(args.search || '').trim();
+    const like = '%' + q + '%';
+    const base = `select c.id,
+        c.full_name as name,
+        c.phone,
+        c.email,
+        coalesce(c.created_at, (select min(o.confirmed_at) from orders o where o.customer_id = c.id)) as joined,
+        (select count(*)::int from orders o where o.customer_id = c.id) as orders,
+        c.credit_balance as credit
+      from customers c`;
+    const rows = q
+      ? await sql.unsafe(base + ` where c.full_name ilike $1 or c.phone ilike $1 or coalesce(c.email,'') ilike $1 order by c.id desc limit 500`, [like])
+      : await sql.unsafe(base + ` order by c.id desc limit 500`);
+    const total = await sql`select count(*)::int n from customers`;
+    await sql.end();
+    return { ok: true as const, rows, total: total[0].n };
+  } catch { return { ok: false as const, rows: [] as any[], total: 0 }; }
+}
+
+// Owner-only spreadsheet export of the same list.
+export async function exportCustomersCsv() {
+  try {
+    // ADMIN-GATED:exportCustomersCsv
+    if (!(await requireAdminAction())) return { ok: false as const, csv: '' };
+    const sql = conn();
+    const rows = await sql.unsafe(`select c.full_name as name,
+        c.phone,
+        c.email,
+        coalesce(c.created_at, (select min(o.confirmed_at) from orders o where o.customer_id = c.id)) as joined,
+        (select count(*)::int from orders o where o.customer_id = c.id) as orders
+      from customers c order by c.id`);
+    await sql.end();
+    const cell = (v: unknown) => {
+      let s = v === null || v === undefined ? '' : String(v);
+      // Stop spreadsheet programs from treating a value as a formula.
+      if (/^[=@\t\r]/.test(s)) s = "'" + s;
+      return '"' + s.replace(/"/g, '""') + '"';
+    };
+    const head = ['Name', 'Phone', 'Email', 'Date joined', 'Orders'].map(cell).join(',');
+    const body = rows.map((r: any) => [r.name, r.phone, r.email, r.joined ? String(r.joined).slice(0, 10) : '', r.orders].map(cell).join(',')).join('\n');
+    return { ok: true as const, csv: head + '\n' + body + '\n' };
+  } catch { return { ok: false as const, csv: '' }; }
 }
 export async function listEvents() {
   try {

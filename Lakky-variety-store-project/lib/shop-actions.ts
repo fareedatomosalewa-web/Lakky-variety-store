@@ -292,7 +292,7 @@ export async function confirmOrder(args: { pendingRef: string; verifiedAmount: n
     const sets = await db.select().from(settings).limit(1);
     const freeDays = (sets[0] as any)?.freeHoldDays ?? 14;
     const today = lagosToday();
-    return await db.transaction(async (tx: any) => {
+    const result: any = await db.transaction(async (tx: any) => {
       // Reuse the Order ID given at submit. Only legacy rows without one draw a serial.
       let displayId: string = (pend as any).displayId || null;
       let serial = 0;
@@ -339,6 +339,18 @@ export async function confirmOrder(args: { pendingRef: string; verifiedAmount: n
       await tx.execute(dsql`insert into order_messages (order_id, sender, text) values (${orderId}, 'owner', ${over > 0 ? 'Payment confirmed. You paid extra (' + '₦' + over.toLocaleString() + '), which was moved into credit.' : 'Payment confirmed.'})`);
       return { ok: true as const, displayId, over };
     });
+    if (result && result.ok) {
+      try {
+        const { sendCustomerPush } = await import('./customer-push');
+        await sendCustomerPush({
+          customerId: pend.customerId,
+          title: 'Order confirmed',
+          body: `Order ${result.displayId} is confirmed. We are preparing it now.`,
+          url: '/orders',
+        });
+      } catch { /* push best-effort */ }
+    }
+    return result;
   } catch (e: any) {
     if (String(e?.message).includes('race-lost')) return { ok: false as const, reason: 'race-lost' };
     return { ok: false as const, reason: 'error' };

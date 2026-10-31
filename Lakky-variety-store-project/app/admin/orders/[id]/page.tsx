@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react';
 import { confirmOrder, getSubmissionProof } from '../../../../lib/shop-actions';
 import { useAdminGuard } from '../../../../lib/use-admin-guard';
 import { n } from '../../../../lib/pricing';
-import AdminShell from '../../shell';
 import { TimelineSteps } from '../../../../lib/timeline';
 import { getOrderThread, getPendingDetail, getMessages, listFees, listRefunds, decideRefund, markFeePaid, markThreadSeen, postMessage, rejectPending, advanceOrder } from '../../../../lib/shop-v1';
 import { stepLabel } from '../../../../lib/pricing';
@@ -119,13 +118,13 @@ export default function AdminOrder({ params }: { params: { id: string } }) {
     await markFeePaid({ orderId, kind: 'stockpile', admin: 'owner' }).catch(() => null);
     setMsg('Stockpile fee marked paid.');
   };
-  if (!o) return <AdminShell><div className="card">No order with this ID in Supabase yet.</div></AdminShell>;
+  if (!o) return <><div className="card">No order with this ID in Supabase yet.</div></>;
   if (!allowed) return <div className="card">Checking admin session…</div>;
   const exp = figures ? n(figures.expectedWithFee) : n(o.total);
   const expBase = figures ? n(figures.expectedTotal) : n(o.total);
   const feeAmt = figures ? n(figures.feeAmount) : 0;
   const showMoney = figures ? (figures.under || figures.over) : false;
-  return (<AdminShell><div><a href="/admin" style={{ textDecoration: 'none' }}>← Orders</a> <span className="badge">{o.displayId}</span> <span className="badge badge-mut">{live && live.pending ? live.pending.status : ''}</span></div>
+  return (<><div><a href="/admin" style={{ textDecoration: 'none' }}>← Orders</a> <span className="badge">{o.displayId}</span> <span className="badge badge-mut">{live && live.pending ? live.pending.status : ''}</span></div>
   <div className="card" style={{ textAlign: 'center' }}><div className="small" style={{ fontWeight: 700 }}>EXPECTED AMOUNT</div>
     <div style={{ fontSize: 34, fontWeight: 800, color: 'var(--plum)' }}>₦{exp.toLocaleString()}</div>
     <div className="small">₦{expBase.toLocaleString()} order{feeAmt > 0 ? ` + ₦${feeAmt.toLocaleString()} stockpile fee` : ''}</div>
@@ -200,5 +199,5 @@ export default function AdminOrder({ params }: { params: { id: string } }) {
         <button className="btn-s" onClick={() => setZoom((z) => Math.min(4, +(z + 0.5).toFixed(1)))}>+ Zoom in</button>
         <button className="btn" onClick={() => setLight(false)}>Close ✕</button>
       </div></div>)}
-    </AdminShell>);
+    </>);
 }

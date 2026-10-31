@@ -30,7 +30,7 @@ export default function LoginPage() {
     </div>
     <button className="btn" style={{ width: '100%' }} onClick={go} disabled={busy}>{busy ? 'Logging in…' : 'Log in'}</button>
     {err && <div className="notice-err" style={{ whiteSpace: 'normal', marginTop: 8 }}>⚠️ {err}</div>}
-    <div className="small" style={{ marginTop: 10 }}><a href="/reset">Forgot password?</a></div>
+    <div className="small" style={{ marginTop: 10 }}><a href="/forgot">Forgot password?</a></div>
     <div className="small" style={{ marginTop: 6 }}>New here? <a href="/signup">Create an account</a>.</div>
     <div className="small">Old account from the shop? If you never set a password, use <a href="/reset">Forgot password</a> with the same email and phone number we have for you.</div>
   </div>);

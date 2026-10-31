@@ -11,6 +11,7 @@ import { notifyMe, toast, askNotifyPermission } from '../../lib/notify-client';
 const NAV = [
   { href: '/admin', label: 'Orders' },
   { href: '/admin/products', label: 'Products' },
+  { href: '/admin/customers', label: 'Customers' },
   { href: '/admin/reports', label: 'Reports' },
   { href: '/admin/settings', label: 'Settings' },
 ];

@@ -99,18 +99,29 @@ export const customers = pgTable('customers', {
   email: text('email'),
   passwordHash: text('password_hash'),
   creditBalance: integer('credit_balance').default(0),
-  createdAt: timestamp('created_at').defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 });
 
+// Phones that agreed to receive order notifications for a customer.
+export const customerPushSubscriptions = pgTable('customer_push_subscriptions', {
+  id: serial('id').primaryKey(),
+  customerId: integer('customer_id').notNull().references(() => customers.id, { onDelete: 'cascade' }),
+  endpoint: text('endpoint').notNull().unique(),
+  p256dh: text('p256dh').notNull(),
+  auth: text('auth').notNull(),
+  userAgent: text('user_agent'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Email reset codes. Only a salted hash of the 6-digit code is kept.
 export const customerPasswordResets = pgTable('customer_password_resets', {
   id: serial('id').primaryKey(),
   customerId: integer('customer_id').notNull().references(() => customers.id, { onDelete: 'cascade' }),
   codeHash: text('code_hash').notNull(),
-  expiresAt: timestamp('expires_at').notNull(),
-  attemptsUsed: integer('attempts_used').default(0),
-  verifiedAt: timestamp('verified_at'),
-  usedAt: timestamp('used_at'),
-  createdAt: timestamp('created_at').defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  attempts: integer('attempts').notNull().default(0),
+  usedAt: timestamp('used_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
 // Pending (never fulfilable, never reserves stock)

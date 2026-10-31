@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react';
 import { useAdminGuard } from '../../lib/use-admin-guard';
 import { listPending, listConfirmed, adminSearch, setProgress, dashboard, exportCsv, remindersDue, listFees, agedStockpile, releaseStockpile, rejectPending, sweepUnpaid } from '../../lib/shop-v1';
 import { confirmOrder } from '../../lib/shop-actions';
-import AdminShell from './shell';
 const ago = (d: any) => {
   const m = Math.floor((Date.now() - new Date(d).getTime()) / 60000);
   if (m < 1) return 'just now';
@@ -116,7 +115,7 @@ export default function AdminDash() {
       if (r && r.ok) { setPop(null); load(); } else setPopMsg('Could not reject. Try again.');
     }
   };
-  return (<AdminShell><h2>Orders</h2>
+  return (<><h2>Orders</h2>
     <div className="card" style={{ padding: 10 }}>
       <div className="searchbar" style={{ margin: 0 }}>
         <span aria-hidden="true">🔍</span>
@@ -171,5 +170,5 @@ export default function AdminDash() {
     {stats && <div className="card small">Today sales ₦{Number(stats.salesToday).toLocaleString()} • open orders {stats.openOrders} • stockpiled {stats.stockpiled} • store credit owed ₦{Number(stats.creditOwed).toLocaleString()} • <button className="btn-s" onClick={() => csv('orders')}>Orders CSV</button> <button className="btn-s" onClick={() => csv('customers')}>Customers CSV</button></div>}
     {remind.length > 0 && <div className="card"><b>Not-completed reminders due ({remind.length})</b>{remind.map((o: any) => <div key={o.id} className="small">{o.displayId} • {o.st} — remind customer + owner</div>)}</div>}
     {aged.length > 0 && <div className="card"><b>Past max stockpile days ({aged.length}) — contact first, then release</b>{aged.map((o: any) => <div key={o.id} className="small">{o.displayId} • {o.name} • uncollected {o.days} days (max {o.maxd}) <button className="btn-d" onClick={async () => { const { releaseStockpile } = await import('../../lib/shop-v1'); await releaseStockpile({ orderId: o.id, actor: 'owner' }); load(); }}>Release to stock</button></div>)}</div>}
-  </AdminShell>);
+  </>);
 }
