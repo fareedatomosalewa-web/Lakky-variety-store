@@ -8,11 +8,14 @@ export function authOptions(database: typeof dbType, tables: typeof authTables):
   return {
     database: drizzleAdapter(database, { provider: 'pg', schema: tables }),
     emailAndPassword: { enabled: true, disableSignUp: true },
-    // Vercel Preview builds get a new hostname on every deploy. Without this,
-    // the admin sign-in request is rejected as an "invalid origin" on Preview.
+    // Vercel Preview builds get a new hostname on every deploy. These are the
+    // shop's own projects under the lvs12 team — deliberately NOT a blanket
+    // "*.vercel.app" wildcard, so another team's site is never trusted.
     trustedOrigins: [
       'http://localhost:3000',
-      'https://*.vercel.app',
+      'https://lakky-variety-store-*-lvs12.vercel.app',
+      'https://lakky-variety-store-chgs.vercel.app',
+      'https://lakky-variety-store.vercel.app',
       ...(process.env.BETTER_AUTH_URL ? [process.env.BETTER_AUTH_URL] : []),
       ...(process.env.NEXT_PUBLIC_APP_URL ? [process.env.NEXT_PUBLIC_APP_URL] : []),
     ],
