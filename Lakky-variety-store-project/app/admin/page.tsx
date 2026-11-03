@@ -33,6 +33,8 @@ export default function AdminDash() {
   const [popMsg, setPopMsg] = useState('');
   const [popReason, setPopReason] = useState('Underpayment');
   const [bulkMsg, setBulkMsg] = useState('');
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [loadErr, setLoadErr] = useState('');
   const bulkApply = async () => {
     const refs = sel.map((id) => { const it = items.find((x) => x.id === id); return it ? (it.displayId || it.ref) : null; }).filter(Boolean) as string[];
     let ok = 0, fail = 0;
@@ -52,21 +54,28 @@ export default function AdminDash() {
     setBulkAsk(''); setSel([]); load();
   };
   const load = async () => {
-    await sweepUnpaid().catch(() => null);
+    setLoadState('loading'); setLoadErr('');
+    const failed: string[] = [];
     const r: any = await listPending().catch(() => null);
-    if (r && r.ok) setItems(r.rows);
+    if (r && r.ok) setItems(r.rows); else failed.push('pending queue');
     const c: any = await listConfirmed().catch(() => null);
-    if (c && c.ok) setConfirmed(c.rows);
+    if (c && c.ok) setConfirmed(c.rows); else failed.push('confirmed orders');
     const d: any = await dashboard().catch(() => null);
-    if (d && d.ok) setStats(d);
+    if (d && d.ok) setStats(d); else failed.push('totals');
     const rm: any = await remindersDue().catch(() => null);
-    if (rm && rm.ok) setRemind(rm.due);
+    if (rm && rm.ok) setRemind(rm.due); else failed.push('reminders');
     const f: any = await listFees({}).catch(() => null);
-    if (f && f.ok) setFees(f.rows);
+    if (f && f.ok) setFees(f.rows); else failed.push('fees');
     const ag: any = await agedStockpile().catch(() => null);
-    if (ag && ag.ok) setAged(ag.aged);
+    if (ag && ag.ok) setAged(ag.aged); else failed.push('stockpile');
+    if (failed.length) {
+      setLoadState('error');
+      setLoadErr(`Could not load: ${failed.join(', ')}. Nothing has changed.`);
+    } else setLoadState('ready');
   };
   useEffect(() => { if (allowed) load(); }, [allowed]);
+  // Keep a sweep running in the background; it is not part of what the page shows.
+  useEffect(() => { if (allowed) sweepUnpaid().catch(() => null); }, [allowed]);
   // Live search: results (and suggestions) update while typing — no Go needed.
   useEffect(() => {
     const text = q.trim();
@@ -79,12 +88,24 @@ export default function AdminDash() {
     }, 250);
     return () => clearTimeout(t);
   }, [q]);
-  useEffect(() => { setShown(25); }, [tab]);
+  useEffect(() => { setShown(25); setSel([]); setBulkMsg(''); }, [tab]);
   if (!allowed) return <div className="card">Checking admin session…</div>;
   const toggle = (id: number) => setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   const bulk = async (to: string) => {
-    if (!sel.length) return;
-    await setProgress({ ids: sel, to, actor: 'owner' }).catch(() => null);
+    if (!sel.length) { setBulkMsg('Pick at least one order first (tick the box on the left).'); return; }
+    setBulkMsg(`Working — moving ${sel.length} order(s) to ${to}…`);
+    const r: any = await setProgress({ ids: sel, to, actor: 'owner' }).catch(() => null);
+    if (!r || !r.ok) {
+      setBulkMsg(r && r.reason === 'admin-only'
+        ? 'Admin session expired — sign in again, then retry.'
+        : 'Could not move the picked orders. Nothing has changed. Try again.');
+      return;
+    }
+    const skipped = (r.skipped || []) as any[];
+    const why = skipped.slice(0, 3).map((s) => `#${s.id}: ${s.reason}`).join('; ');
+    setBulkMsg(r.moved
+      ? `Moved ${r.moved} order(s) to ${to}.${skipped.length ? ` Skipped ${skipped.length} (${why}).` : ''}`
+      : `Nothing moved — no picked row is an order that can move to ${to}.${why ? ` ${why}.` : ''}`);
     setSel([]); load();
   };
   const firstHit = () => { if (found.length) location.href = `/admin/orders/${encodeURIComponent(found[0].displayId)}`; };
@@ -116,6 +137,12 @@ export default function AdminDash() {
     }
   };
   return (<><h2>Orders</h2>
+    {loadState === 'error' && (<div className="card" style={{ borderColor: 'var(--red)' }}>
+      <b>Could not load the orders list.</b>
+      <div className="small">{loadErr}</div>
+      <div style={{ marginTop: 8 }}><button className="btn" onClick={load}>Retry</button></div>
+    </div>)}
+    {loadState === 'loading' && <div className="small" style={{ margin: '4px 2px' }}>Loading orders…</div>}
     <div className="card" style={{ padding: 10 }}>
       <div className="searchbar" style={{ margin: 0 }}>
         <span aria-hidden="true">🔍</span>
@@ -159,7 +186,7 @@ export default function AdminDash() {
       </tr>)}</tbody>
     </table></div>
     {rows.length > visible.length && (<div style={{ textAlign: 'center', margin: '10px 0' }}><button className="btn-s" onClick={() => setShown((n) => n + 25)}>Load 25 more ({rows.length - visible.length} left)</button></div>)}
-    {rows.length === 0 && <div className="empty">Nothing here.</div>}
+    {rows.length === 0 && loadState === 'ready' && <div className="empty">Nothing here.</div>}
     {pop && (<div className="card"><h3>{pop.mode === 'confirm' ? 'Have you seen this payment in our bank?' : 'Reject this order?'}</h3>
       {pop.mode === 'reject' && <div><select value={popReason} onChange={(e) => setPopReason(e.target.value)}>{['Underpayment', 'Fake receipt', 'Wrong order'].map((r) => <option key={r} value={r}>{r}</option>)}</select></div>}
       <div><b>{popMsg}</b></div>

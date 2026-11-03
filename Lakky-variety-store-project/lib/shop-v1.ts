@@ -10,7 +10,21 @@ import { normalizePhone } from './phone';
 function conn() {
   const url = process.env.DATABASE_URL || '';
   if (!url) throw new Error('no-db');
-  return postgres(url, { prepare: false });
+  // One connection per call is enough for these short actions, and it stops a
+  // burst of admin calls from exhausting the Supabase pooler (which was making
+  // lists silently come back empty).
+  return postgres(url, { prepare: false, max: 1, connect_timeout: 15, idle_timeout: 5 });
+}
+
+// One quick retry for transient DNS/connect failures. Returns the original
+// error if the second attempt fails too.
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch {
+    await new Promise((r) => setTimeout(r, 350));
+    return fn();
+  }
 }
 
 // Same admin gate as shop-actions (duplicated to avoid a server-module cycle).
@@ -75,7 +89,7 @@ export async function listConfirmed() {
     // ADMIN-GATED:listConfirmed
     if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
-    const rows = await sql`select o.id, o.display_id as "displayId", o.total, o.paid_amount as paid, o.fulfilment_status as st, o.confirmed_at as "at", o.completed_at as "completedAt", c.full_name as name, c.phone, (select reference_id from pending_refs p where p.id=o.pending_id) as "referenceId", (select count(*)::int from order_messages m where m.order_id=o.id and m.sender='customer' and coalesce(m.seen_by_admin,false)=false) as "unread" from orders o left join customers c on c.id=o.customer_id order by o.id desc limit 100`;
+    const rows = await withRetry(() => sql`select o.id, o.display_id as "displayId", o.total, o.paid_amount as paid, o.fulfilment_status as st, o.confirmed_at as "at", o.completed_at as "completedAt", c.full_name as name, c.phone, (select reference_id from pending_refs p where p.id=o.pending_id) as "referenceId", (select count(*)::int from order_messages m where m.order_id=o.id and m.sender='customer' and coalesce(m.seen_by_admin,false)=false) as "unread" from orders o left join customers c on c.id=o.customer_id order by o.id desc limit 100`);
     await sql.end();
     return { ok: true as const, rows };
   } catch { return { ok: false as const, rows: [] as any[] }; }
@@ -87,7 +101,7 @@ export async function listPending() {
     // ADMIN-GATED:listPending
     if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
-    const rows = await sql`select p.id, p.ref, p.display_id as "displayId", p.reference_id as "referenceId", p.expected_total as total, p.status, p.created_at as "at", c.full_name as name, c.phone, (select max(amount_claimed) from payment_submissions s where s.pending_id=p.id) as submitted, exists(select 1 from payment_submissions s where s.pending_id=p.id and s.proof_url is not null and s.proof_url <> '') as "hasReceipt", (select count(*)::int from order_messages m where m.pending_id=p.id and m.sender='customer' and coalesce(m.seen_by_admin,false)=false) as "unread" from pending_refs p left join customers c on c.id=p.customer_id where p.status in ('pending','under') order by p.id desc limit 200`;
+    const rows = await withRetry(() => sql`select p.id, p.ref, p.display_id as "displayId", p.reference_id as "referenceId", p.expected_total as total, p.status, p.created_at as "at", c.full_name as name, c.phone, (select max(amount_claimed) from payment_submissions s where s.pending_id=p.id) as submitted, exists(select 1 from payment_submissions s where s.pending_id=p.id and s.proof_url is not null and s.proof_url <> '') as "hasReceipt", (select count(*)::int from order_messages m where m.pending_id=p.id and m.sender='customer' and coalesce(m.seen_by_admin,false)=false) as "unread" from pending_refs p left join customers c on c.id=p.customer_id where p.status in ('pending','under') order by p.id desc limit 200`);
     await sql.end();
     return { ok: true as const, rows };
   } catch { return { ok: false as const, rows: [] as any[] }; }
@@ -252,35 +266,190 @@ export async function listRefunds(args: { orderId?: number }) {  try {
 }
 
 // ---- order thread: numeric order id + messages by pending ref or display id ----
+// Messages live under pending_id before confirmation and order_id after it, so
+// a real conversation must read both — otherwise the pre-confirmation thread
+// looks like it vanished the moment the order was confirmed.
 export async function getOrderThread(args: { ref: string }) {
   try {
     // ADMIN-GATED:getOrderThread
-    if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
+    if (!(await requireStaffAction())) return { ok: false as const, orderId: null, messages: [] as any[] };
     const sql = conn();
-    const key = String(args.ref || '').trim().toUpperCase();
-    const all = await sql`select id, display_id as "displayId", pending_id as "pendingId", fulfilment_status as st, confirmed_at as "at", fulfilment_method as method, free_until as "freeUntil" from orders where upper(display_id) = ${key} or upper(display_id) like ${'%' + key} order by id desc limit 5`;
-    const hit = (all as any[])[0];
-    let orderId: number | null = hit ? hit.id : null;
+    const raw = String(args.ref || '').trim();
+    const key = raw.toUpperCase();
+    let row: any = (await withRetry(() => sql`select id, display_id as "displayId", pending_id as "pendingId", fulfilment_status as st, confirmed_at as "at", fulfilment_method as method, free_until as "freeUntil" from orders where upper(display_id) = ${key} or upper(display_id) like ${key + '%'} order by id desc limit 1`))[0] || null;
+    let orderId: number | null = row ? row.id : null;
+    let pendingId: number | null = row ? row.pendingId : null;
     if (!orderId) {
-      const p = await sql`select id from pending_refs where ref=${args.ref} or reference_id=${args.ref} or display_id=${args.ref} or display_id=${String(args.ref || '').trim().toUpperCase()} limit 1`;
+      const p = await sql`select id from pending_refs where ref=${raw} or reference_id=${raw} or upper(display_id)=${key} or upper(reference_id)=${key} limit 1`;
       if (p.length) {
+        pendingId = p[0].id;
         const m = await sql`select id from orders where pending_id=${p[0].id} order by id desc limit 1`;
         if (m.length) orderId = m[0].id;
       }
     }
-    const messages = orderId ? await sql`select sender, text, created_at as "at" from order_messages where order_id=${orderId} order by id` : [];
+    if (orderId && !pendingId) {
+      const o = await sql`select pending_id as "pendingId" from orders where id=${orderId} limit 1`;
+      if (o.length) pendingId = o[0].pendingId;
+    }
+    if (orderId && !row) {
+      row = (await sql`select id, display_id as "displayId", pending_id as "pendingId", fulfilment_status as st, confirmed_at as "at", fulfilment_method as method, free_until as "freeUntil" from orders where id=${orderId} limit 1`)[0] || null;
+    }
+    const messages = (orderId || pendingId)
+      ? await sql`select sender, text, created_at as "at" from order_messages
+          where (${orderId || 0} <> 0 and order_id = ${orderId || 0})
+             or (${pendingId || 0} <> 0 and pending_id = ${pendingId || 0})
+          order by id`
+      : [];
     await sql.end();
-    const stRow = orderId ? (all as any[]).find((o) => o.id === orderId) : null;
     let timeline: any = null;
-    if (stRow) {
+    if (row) {
       timeline = {
-        displayId: stRow.displayId, fulfilment: stRow.st,
-        confirmedAt: stRow.at, method: stRow.method || '',
-        freeUntil: stRow.freeUntil ? String(stRow.freeUntil).slice(0, 10) : '',
+        displayId: row.displayId, fulfilment: row.st,
+        confirmedAt: row.at, method: row.method || '',
+        freeUntil: row.freeUntil ? String(row.freeUntil).slice(0, 10) : '',
       };
     }
-    return { ok: true as const, orderId, pendingId: stRow ? stRow.pendingId : null, displayId: stRow ? stRow.displayId : null, messages, status: stRow ? stRow.st : null, timeline };
+    return { ok: true as const, orderId, pendingId, displayId: row ? row.displayId : null, messages, status: row ? row.st : null, timeline };
   } catch { return { ok: false as const, orderId: null, messages: [] as any[] }; }
+}
+
+// ---- one combined read for the admin order screen ----
+// The screen used to make five separate server calls; a single transient DB
+// failure in any of them left the page saying "No order…" forever. This does
+// the lookup once, retries a failed connect, and always reports found / missing.
+export async function getAdminOrderDetail(args: { ref: string }) {
+  try {
+    // ADMIN-GATED:getAdminOrderDetail
+    if (!(await requireStaffAction())) return { ok: false as const, found: false, messages: [] as any[] };
+    const sql = conn();
+    const raw = String(args.ref || '').trim();
+    const key = raw.toUpperCase();
+    // Everything the screen needs in one round trip: order/pending, customer,
+    // submissions, the combined chat, fees, refunds and the fee rate.
+    const orderRows: any[] = await withRetry(() => sql`select
+        o.*, c.full_name as name, c.phone, c.email,
+        p.id as p_id, p.ref as p_ref, p.display_id as p_display_id, p.status as p_status,
+        p.expected_total as p_expected_total, p.created_at as p_created_at, p.fulfilment as p_fulfilment,
+        (select coalesce(json_agg(json_build_object('amountClaimed', s.amount_claimed, 'reference', s.reference, 'at', s.created_at, 'hasProof', (s.proof_url is not null and s.proof_url <> '')) order by s.id), '[]'::json)
+          from payment_submissions s where s.pending_id = coalesce(o.pending_id, p.id)) as submissions,
+        (select coalesce(json_agg(json_build_object('sender', m.sender, 'text', m.text, 'at', m.created_at) order by m.id), '[]'::json)
+          from order_messages m where m.order_id = o.id or (coalesce(o.pending_id, p.id) is not null and m.pending_id = coalesce(o.pending_id, p.id))) as messages,
+        (select coalesce(json_agg(json_build_object('id', f.id, 'amount', f.amount, 'status', f.status, 'by', f.verified_by) order by f.id desc), '[]'::json)
+          from fee_payments f where f.order_id = o.id) as fees,
+        (select coalesce(json_agg(json_build_object('id', r.id, 'kind', r.kind, 'amount', r.amount, 'bank_name', r.bank_name, 'account_number', r.account_number, 'account_name', r.account_name, 'status', r.status) order by r.id desc), '[]'::json)
+          from refund_requests r where r.order_id = o.id and r.status = 'pending') as refunds,
+        (select stockpile_fee_per_day from settings limit 1) as fee_rate,
+        (select global_daily_fee from settings limit 1) as fee_global
+      from orders o
+      left join pending_refs p on p.id = o.pending_id
+      left join customers c on c.id = o.customer_id
+      where upper(o.display_id) = ${key}
+         or upper(o.display_id) like ${key + '%'}
+         or o.pending_id in (select id from pending_refs where ref=${raw} or reference_id=${raw} or upper(display_id)=${key} or upper(reference_id)=${key})
+      order by o.id desc limit 1`);
+    let order: any = orderRows[0] || null;
+    let pendingRow: any = null;
+    let agg: any = null;
+    if (order) {
+      agg = order;
+      if (order.p_id) {
+        pendingRow = {
+          id: order.p_id, ref: order.p_ref, display_id: order.p_display_id, status: order.p_status,
+          expected_total: order.p_expected_total, created_at: order.p_created_at, fulfilment: order.p_fulfilment,
+          name: order.name, phone: order.phone, email: order.email, customer_id: order.customer_id,
+        };
+      }
+    } else {
+      const pRows: any[] = await withRetry(() => sql`select p.*, c.full_name as name, c.phone, c.email,
+          (select coalesce(json_agg(json_build_object('amountClaimed', s.amount_claimed, 'reference', s.reference, 'at', s.created_at, 'hasProof', (s.proof_url is not null and s.proof_url <> '')) order by s.id), '[]'::json)
+            from payment_submissions s where s.pending_id = p.id) as submissions,
+          (select coalesce(json_agg(json_build_object('sender', m.sender, 'text', m.text, 'at', m.created_at) order by m.id), '[]'::json)
+            from order_messages m where m.pending_id = p.id) as messages,
+          '[]'::json as fees, '[]'::json as refunds,
+          (select stockpile_fee_per_day from settings limit 1) as fee_rate,
+          (select global_daily_fee from settings limit 1) as fee_global
+        from pending_refs p left join customers c on c.id = p.customer_id
+        where p.ref=${raw} or p.reference_id=${raw} or upper(p.display_id)=${key} or upper(p.reference_id)=${key}
+        order by p.id desc limit 1`);
+      pendingRow = pRows[0] || null;
+      agg = pendingRow;
+      if (pendingRow) {
+        // A pending row may already have its confirmed order (race between confirm and this read).
+        const linked: any[] = await sql`select o.*, c.full_name as name, c.phone, c.email,
+            (select coalesce(json_agg(json_build_object('amountClaimed', s.amount_claimed, 'reference', s.reference, 'at', s.created_at, 'hasProof', (s.proof_url is not null and s.proof_url <> '')) order by s.id), '[]'::json)
+              from payment_submissions s where s.pending_id = ${pendingRow.id}) as submissions,
+            (select coalesce(json_agg(json_build_object('sender', m.sender, 'text', m.text, 'at', m.created_at) order by m.id), '[]'::json)
+              from order_messages m where m.order_id = o.id or m.pending_id = ${pendingRow.id}) as messages,
+            (select coalesce(json_agg(json_build_object('id', f.id, 'amount', f.amount, 'status', f.status, 'by', f.verified_by) order by f.id desc), '[]'::json)
+              from fee_payments f where f.order_id = o.id) as fees,
+            (select coalesce(json_agg(json_build_object('id', r.id, 'kind', r.kind, 'amount', r.amount, 'bank_name', r.bank_name, 'account_number', r.account_number, 'account_name', r.account_name, 'status', r.status) order by r.id desc), '[]'::json)
+              from refund_requests r where r.order_id = o.id and r.status = 'pending') as refunds
+          from orders o left join customers c on c.id = o.customer_id
+          where o.pending_id = ${pendingRow.id} order by o.id desc limit 1`;
+        if (linked.length) { order = linked[0]; agg = linked[0]; }
+      }
+    }
+    if (!order && !pendingRow) {
+      await sql.end();
+      return { ok: true as const, found: false, messages: [] as any[] };
+    }
+    await sql.end();
+    const orderId: number | null = order ? Number(order.id) : null;
+    const pendingId: number | null = pendingRow ? Number(pendingRow.id) : (order?.pending_id ? Number(order.pending_id) : null);
+    const submissions = (agg?.submissions || []) as any[];
+    const messages = (agg?.messages || []) as any[];
+    const fees = (agg?.fees || []) as any[];
+    const refunds = (agg?.refunds || []) as any[];
+    // Expected / submitted figures, including the stockpile fee when it applies.
+    let figures: any = null;
+    try {
+      const fulfilment = (order?.fulfilment_details || pendingRow?.fulfilment || {}) as any;
+      const method = order?.fulfilment_method || fulfilment.method || '';
+      const isStockpile = method === 'Stockpile';
+      const expectedTotal = Number(pendingRow?.expected_total ?? order?.total ?? 0);
+      const submittedTotal = submissions.reduce((s, x) => s + Number(x.amountClaimed || 0), 0);
+      let freeUntil = '', extraDays = 0, rate = Number(agg?.fee_rate ?? agg?.fee_global ?? 0), feeAmount = 0;
+      if (order && isStockpile) {
+        freeUntil = order.free_until ? String(order.free_until).slice(0, 10) : '';
+        const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Lagos', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+        if (freeUntil && today > freeUntil && rate > 0) {
+          extraDays = Math.ceil((new Date(today + 'T12:00:00Z').getTime() - new Date(freeUntil + 'T12:00:00Z').getTime()) / 86400000);
+          feeAmount = extraDays * rate;
+        }
+      }
+      figures = {
+        expectedTotal, submittedTotal, method, isStockpile, freeUntil, extraDays, rate, feeAmount,
+        expectedWithFee: expectedTotal + feeAmount,
+        under: submittedTotal < expectedTotal,
+        over: submittedTotal > expectedTotal,
+      };
+    } catch { figures = null; }
+    const src: any = order || pendingRow;
+    return {
+      ok: true as const,
+      found: true,
+      order: order ? {
+        id: orderId, displayId: order.display_id, total: Number(order.total || 0),
+        paid: Number(order.paid_amount || 0), status: order.fulfilment_status,
+        paymentStatus: order.payment_status, confirmedAt: order.confirmed_at,
+        completedAt: order.completed_at, method: order.fulfilment_method,
+        details: order.fulfilment_details, freeUntil: order.free_until ? String(order.free_until).slice(0, 10) : '',
+      } : null,
+      pending: pendingRow ? {
+        id: pendingId, ref: pendingRow.ref, displayId: pendingRow.display_id,
+        status: pendingRow.status, expectedTotal: Number(pendingRow.expected_total || 0),
+        createdAt: pendingRow.created_at, method: (pendingRow.fulfilment || {}).method || '',
+        area: (pendingRow.fulfilment || {}).area || '',
+      } : null,
+      customer: { id: src.customer_id ?? null, name: src.name || '', phone: src.phone || '', email: src.email || '' },
+      submissions, figures, messages, fees, refunds,
+      timeline: order ? {
+        displayId: order.display_id, fulfilment: order.fulfilment_status,
+        confirmedAt: order.confirmed_at, method: order.fulfilment_method || '',
+        freeUntil: order.free_until ? String(order.free_until).slice(0, 10) : '',
+      } : null,
+    };
+  } catch { return { ok: false as const, found: false, messages: [] as any[] }; }
 }
 
 // ---- stockpile aged past max days: contact + release back to sale ----
@@ -386,7 +555,7 @@ export async function postMessage(args: { orderId?: number; pendingId?: number; 
     const t = String(args.text || '').slice(0, 1000);
     if ((!args.orderId && !args.pendingId) || !t.trim()) { await sql.end(); return { ok: false as const }; }
     if (args.sender !== 'owner' && args.sender !== 'customer') { await sql.end(); return { ok: false as const }; }
-    await sql`insert into order_messages (order_id, pending_id, sender, text, seen_by_admin) values (${args.orderId || null}, ${args.pendingId || null}, ${args.sender}, ${t}, ${args.sender === 'owner'})`;
+    const inserted = await sql`insert into order_messages (order_id, pending_id, sender, text, seen_by_admin) values (${args.orderId || null}, ${args.pendingId || null}, ${args.sender}, ${t}, ${args.sender === 'owner'}) returning created_at as "at"`;
     if (args.sender === 'owner') {
       let cid: number | null = null;
       let oid: number | null = args.orderId || null;
@@ -429,7 +598,7 @@ export async function postMessage(args: { orderId?: number; pendingId?: number; 
       } catch { /* push best-effort */ }
     }
     await sql.end();
-    return { ok: true as const };
+    return { ok: true as const, message: { sender: args.sender, text: t, at: inserted[0]?.at || new Date().toISOString() } };
   } catch { return { ok: false as const }; }
 }
 export async function getMessages(args: { orderId?: number; pendingId?: number }) {
@@ -531,28 +700,42 @@ export async function cancelOrder(args: { orderId: number; phone: string; reason
 }
 
 // ---- fulfilment progress + who-completed + reminders due ----
-const FLOW = ['pending', 'confirmed', 'packaged', 'onway', 'ready', 'completed'];
+const FLOW = ['pending', 'processing', 'confirmed', 'packaged', 'onway', 'ready', 'completed'];
 const PROGRESS_LABEL: Record<string, string> = {
-  pending: 'being checked', confirmed: 'confirmed', packaged: 'packed',
+  pending: 'being checked', processing: 'confirmed', confirmed: 'confirmed', packaged: 'packed',
   onway: 'on the way', ready: 'ready for pickup', completed: 'completed',
 };
 export async function setProgress(args: { ids: number[]; to: string; actor: string }) {
   try {
     // ADMIN-GATED:setProgress
-    if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
+    if (!(await requireStaffAction())) return { ok: false as const, moved: 0, skipped: [] as any[], reason: 'admin-only' };
     const sql = conn();
-    if (!FLOW.includes(args.to) || !args.ids.length) { await sql.end(); return { ok: false as const }; }
+    if (!FLOW.includes(args.to) || !args.ids.length) {
+      await sql.end();
+      return { ok: false as const, moved: 0, skipped: [] as any[], reason: 'bad-target' };
+    }
+    const toIdx = FLOW.indexOf(args.to);
     const pushes: { customerId: number; message: string }[] = [];
+    const skipped: { id: number; reason: string }[] = [];
+    let moved = 0;
     for (const id of args.ids.slice(0, 100)) {
+      const cur = await sql`select fulfilment_status as st, customer_id as "cid", display_id as "displayId", order_number as "serial" from orders where id=${id} limit 1`;
+      if (!cur.length) { skipped.push({ id, reason: 'not an order' }); continue; }
+      const from = String(cur[0].st || '');
+      if (from === args.to) { skipped.push({ id, reason: `already ${args.to}` }); continue; }
+      const fromIdx = FLOW.indexOf(from);
+      if (fromIdx === -1) { skipped.push({ id, reason: `unknown status “${from || 'blank'}”` }); continue; }
+      if (toIdx <= fromIdx) { skipped.push({ id, reason: `cannot move from ${from} back to ${args.to}` }); continue; }
       const upd = await sql`update orders set fulfilment_status=${args.to} where id=${id} returning customer_id as cid, display_id as "displayId", order_number as "serial"`;
-      await sql`insert into order_events (order_id, actor, action) values (${id}, ${args.actor}, ${'status->' + args.to})`;
       const row: any = upd[0];
-      if (!row) continue;
+      if (!row) { skipped.push({ id, reason: 'not updated' }); continue; }
+      moved++;
+      await sql`insert into order_events (order_id, actor, action) values (${id}, ${args.actor}, ${'status->' + args.to})`;
       const label = row.displayId || ('#' + (row.serial ?? id));
       const message = `Order ${label} is now: ${PROGRESS_LABEL[args.to] || args.to}`;
       // Respect the customer's own "order updates" switch.
       const off = await sql`select id from notification_prefs
-        where customer_id=${row.cid} and type in ('order updates','progress') and off=true limit 1`.catch(() => []);
+        where customer_id=${row.cid} and type in ('order updates','progress') and off=true limit 1`.catch(() => [] as any[]);
       if (!off.length) {
         await sql`insert into notifications (customer_id, order_id, type, message)
           values (${row.cid}, ${id}, 'progress', ${message})`.catch(() => null);
@@ -568,8 +751,8 @@ export async function setProgress(args: { ids: number[]; to: string; actor: stri
         }
       } catch { /* push best-effort */ }
     }
-    return { ok: true as const };
-  } catch { return { ok: false as const }; }
+    return { ok: true as const, moved, skipped };
+  } catch { return { ok: false as const, moved: 0, skipped: [] as any[], reason: 'db' }; }
 }
 export async function remindersDue() {
   try {
@@ -771,6 +954,7 @@ export async function resetCustomerPassword(args: { customerId: number; newPassw
     const salt = crypto.randomBytes(16).toString('hex');
     await sql`update customers set password_hash=${salt + ':' + hashPw(args.newPassword, salt)} where id=${args.customerId}`;
     await sql`delete from customer_sessions where customer_id=${args.customerId}`;
+    await sql`insert into order_events (order_id, actor, action, note) values (null, 'owner', 'customer-password-reset', ${'customer:' + args.customerId})`.catch(() => null);
     await sql.end();
     return { ok: true as const };
   } catch { return { ok: false as const }; }
@@ -998,6 +1182,27 @@ export async function listCustomersFull(args: { search?: string } = {}) {
     await sql.end();
     return { ok: true as const, rows, total: total[0].n };
   } catch { return { ok: false as const, rows: [] as any[], total: 0 }; }
+}
+
+// One customer for the Manage panel: contact, credit, orders and open invoices.
+export async function getCustomerDetail(args: { customerId: number }) {
+  try {
+    // ADMIN-GATED:getCustomerDetail
+    if (!(await requireAdminAction())) return { ok: false as const, customer: null, orders: [] as any[], pending: [] as any[] };
+    const sql = conn();
+    const c = await sql`select id, full_name as name, phone, email, credit_balance as credit,
+        coalesce(created_at, (select min(o.confirmed_at) from orders o where o.customer_id=customers.id)) as joined
+      from customers where id=${args.customerId} limit 1`;
+    if (!c.length) { await sql.end(); return { ok: false as const, customer: null, orders: [] as any[], pending: [] as any[] }; }
+    const orders = await sql`select id, display_id as "displayId", total, paid_amount as paid,
+        fulfilment_status as status, confirmed_at as "at"
+      from orders where customer_id=${args.customerId} order by id desc limit 100`;
+    const pending = await sql`select id, coalesce(display_id, ref) as "displayId", expected_total as total,
+        status, created_at as "at"
+      from pending_refs where customer_id=${args.customerId} and status in ('pending','under') order by id desc limit 50`;
+    await sql.end();
+    return { ok: true as const, customer: c[0], orders, pending };
+  } catch { return { ok: false as const, customer: null, orders: [] as any[], pending: [] as any[] }; }
 }
 
 // Owner-only spreadsheet export of the same list.
