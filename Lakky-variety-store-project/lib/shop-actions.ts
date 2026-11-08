@@ -292,6 +292,7 @@ export async function confirmOrder(args: { pendingRef: string; verifiedAmount: n
     const sets = await db.select().from(settings).limit(1);
     const freeDays = (sets[0] as any)?.freeHoldDays ?? 14;
     const today = lagosToday();
+    const creditUsed = Number(pend.creditApplied || 0);
     const result: any = await db.transaction(async (tx: any) => {
       // Reuse the Order ID given at submit. Only legacy rows without one draw a serial.
       let displayId: string = (pend as any).displayId || null;
@@ -328,6 +329,11 @@ export async function confirmOrder(args: { pendingRef: string; verifiedAmount: n
         } as any);
       }
       await tx.update(pendingRefs).set({ status: 'confirmed' } as any).where(eq(pendingRefs.id, pend.id));
+      // Store credit quoted at checkout is only taken once the order is real.
+      if (creditUsed > 0) {
+        const dec: any = await tx.execute(dsql`update customers set credit_balance = coalesce(credit_balance,0) - ${creditUsed} where id=${pend.customerId} and coalesce(credit_balance,0) >= ${creditUsed}`);
+        if (!(dec.count ?? dec.rowCount ?? 0)) throw new Error('credit-changed');
+      }
       const over = paid > expected ? paid - expected : 0;      if (over > 0) {
         await tx.execute(dsql`insert into credit_ledger (customer_id, order_id, amount, reason) values (${pend.customerId}, ${orderId}, ${over}, 'overpayment auto-credit')`);
         await tx.execute(dsql`update customers set credit_balance = coalesce(credit_balance,0) + ${over} where id = ${pend.customerId}`);
@@ -353,6 +359,89 @@ export async function confirmOrder(args: { pendingRef: string; verifiedAmount: n
     return result;
   } catch (e: any) {
     if (String(e?.message).includes('race-lost')) return { ok: false as const, reason: 'race-lost' };
+    if (String(e?.message).includes('credit-changed')) return { ok: false as const, reason: 'credit-changed' };
+    return { ok: false as const, reason: 'error' };
+  }
+}
+
+// ---- 3b. ₦0 order: store credit pays in full, so confirm it without an admin step ----
+export async function confirmZeroOrder(args: { ref: string }) {
+  try {
+    const pend = await findPendingByCode(args.ref);
+    if (!pend) return { ok: false as const, reason: 'not-found' };
+    if (Number(pend.expectedTotal) !== 0) return { ok: false as const, reason: 'payment-required' };
+    // Safe to retry: the first tap already turned this pending into an order.
+    if (pend.status === 'confirmed') return { ok: true as const, displayId: (pend as any).displayId || args.ref, already: true };
+    if (!['draft', 'pending'].includes(String(pend.status))) return { ok: false as const, reason: 'not-open' };
+    const cust = (await db.select().from(customers).where(eq(customers.id, pend.customerId)).limit(2)) as any[];
+    const phone = cust.length ? cust[0].phone : '';
+    const items = (await db.select().from(pendingItems).where(eq(pendingItems.pendingId, pend.id))) as any[];
+    const sets = await db.select().from(settings).limit(1);
+    const freeDays = (sets[0] as any)?.freeHoldDays ?? 14;
+    const today = lagosToday();
+    const creditUsed = Number(pend.creditApplied || 0);
+    const result: any = await db.transaction(async (tx: any) => {
+      let displayId: string = (pend as any).displayId || '';
+      let serial = 0;
+      const m = displayId ? displayId.match(/^LVS-(\d+)-/) : null;
+      if (m) {
+        serial = Number(m[1]);
+        const clash: any = await tx.execute(dsql`select id from orders where display_id = ${displayId} limit 1`);
+        if ((clash.rows || clash).length) return { ok: false as const, reason: 'already-confirmed' };
+      } else {
+        const serialRes: any = await tx.execute(dsql`select nextval('order_serial_seq') as n`);
+        serial = Number(serialRes.rows ? serialRes.rows[0].n : serialRes[0].n);
+        displayId = `LVS-${String(serial).padStart(3, '0')}-${last4(phone)}`;
+        await tx.execute(dsql`update pending_refs set display_id = ${displayId} where id = ${pend.id} and display_id is null`);
+      }
+      const skuLines = items.filter((i) => i.variantSkuId);
+      for (const line of skuLines) {
+        const upd: any = await tx.execute(dsql`update variant_skus set available = available - ${line.qty}, reserved = reserved + ${line.qty} where id = ${line.variantSkuId} and available >= ${line.qty}`);
+        const moved = upd.count ?? upd.rowCount ?? 0;
+        if (!moved) throw new Error('race-lost');
+      }
+      const orow: any[] = await tx.insert(orders).values({
+        orderNumber: serial, displayId, customerId: pend.customerId, pendingId: pend.id,
+        total: 0, paidAmount: 0, paymentStatus: 'confirmed',
+        fulfilmentMethod: (pend.fulfilment as any)?.method || null, fulfilmentDetails: pend.fulfilment,
+        fulfilmentStatus: 'processing', confirmedAt: new Date(), freeUntil: addDays(today, freeDays),
+        stockpileStatus: 'held', agreedAt: (pend as any).agreedAt || new Date(), seenInBank: true, last4: last4(phone),
+      } as any).returning({ id: orders.id });
+      const orderId = orow[0].id;
+      for (const line of items) {
+        await tx.insert(orderItems).values({
+          orderId, variantSkuId: line.variantSkuId, addonId: line.addonId,
+          qty: line.qty, unitPriceSnapshot: line.unitPriceSnapshot,
+        } as any);
+      }
+      await tx.update(pendingRefs).set({ status: 'confirmed', agreedAt: new Date() } as any).where(eq(pendingRefs.id, pend.id));
+      // Take exactly the credit quoted at checkout; whatever is left stays in the balance.
+      if (creditUsed > 0) {
+        const dec: any = await tx.execute(dsql`update customers set credit_balance = coalesce(credit_balance,0) - ${creditUsed} where id=${pend.customerId} and coalesce(credit_balance,0) >= ${creditUsed}`);
+        if (!(dec.count ?? dec.rowCount ?? 0)) throw new Error('credit-changed');
+      }
+      if (pend.couponCode) {
+        await tx.execute(dsql`update coupons set used = used + 1 where code = ${pend.couponCode}`);
+      }
+      await tx.execute(dsql`insert into notifications (customer_id, order_id, type, message) values (${pend.customerId}, ${orderId}, 'confirmed', ${'Order ' + displayId + ' confirmed. Paid with store credit.'})`);
+      await tx.execute(dsql`insert into order_messages (order_id, sender, text) values (${orderId}, 'owner', ${'Payment confirmed with store credit. Order ' + displayId + ' is confirmed.'})`);
+      return { ok: true as const, displayId, creditUsed };
+    });
+    if (result && result.ok) {
+      try {
+        const { sendCustomerPush } = await import('./customer-push');
+        await sendCustomerPush({
+          customerId: pend.customerId,
+          title: 'Order confirmed',
+          body: `Order ${result.displayId} is confirmed. We are preparing it now.`,
+          url: '/orders',
+        });
+      } catch { /* push best-effort */ }
+    }
+    return result;
+  } catch (e: any) {
+    if (String(e?.message).includes('race-lost')) return { ok: false as const, reason: 'race-lost' };
+    if (String(e?.message).includes('credit-changed')) return { ok: false as const, reason: 'credit-changed' };
     return { ok: false as const, reason: 'error' };
   }
 }
@@ -396,7 +485,7 @@ export async function trackOrder(args: { displayId: string; phone: string }) {
     if (!p) return { ok: false as const };
     const cust = ((await db.select().from(customers).where(eq(customers.id, p.customerId)).limit(2)) as any[]);
     if (!cust.length || normalizePhone(cust[0].phone) !== phone) return { ok: false as const };
-    const stage = p.status === 'confirmed' ? 'confirmed' : p.status === 'under' ? 'underpayment' : p.status === 'rejected' ? 'rejected' : 'checking';
+    const stage = p.status === 'confirmed' ? 'confirmed' : p.status === 'cancelled' ? 'cancelled' : p.status === 'under' ? 'underpayment' : p.status === 'rejected' ? 'rejected' : 'checking';
     const { getMessages } = await import('./shop-v1');
     let notice: string | null = null;
     try {
@@ -418,6 +507,8 @@ export async function submitReceipt(args: { ref: string; amount: number; fileBas
   try {
     const pend = await findPendingByCode(args.ref);
     if (!pend) return { ok: false as const, reason: 'not-found' };
+    // ₦0 orders are confirmed automatically — they never accept a receipt.
+    if (Number(pend.expectedTotal) === 0) return { ok: false as const, reason: 'zero-order' };
     let key: string | null = null;
     if (args.fileBase64) {
       const { uploadReceipt } = await import('./storage');

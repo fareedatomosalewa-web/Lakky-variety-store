@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { getSettings, submitReceipt } from '../../../lib/shop-actions';
+import { getSettings, submitReceipt, confirmZeroOrder } from '../../../lib/shop-actions';
 import Steps from '../../checkout/steps';
 import { useCustomerOnly } from '../../../lib/use-customer-only';
 import { seedSettings } from '../../../db/seed';
@@ -60,6 +60,7 @@ export default function PayPage({ params }: { params: { ref: string } }) {
     } catch { /* seed defaults */ }
   }, []);
   const total = Number(p.total || 0);
+  const isZero = total === 0;
   const bank = (s.bankDetails as any) || {};
   const onFile = async (f: File | undefined) => {
     setFileErr('');
@@ -68,10 +69,30 @@ export default function PayPage({ params }: { params: { ref: string } }) {
     if (!out) { setFile(null); setFileErr('That file is too big. Please use a photo under 5MB.'); return; }
     setFile(out);
   };
-  const canSubmit = !sending && box1 && box2 && (total === 0 || file !== null);
+  const canSubmit = !sending && (isZero ? box2 : (box1 && box2 && file !== null));
   const submit = async () => {
     if (!canSubmit) return;
     setSending(true); setSendErr('');
+    if (isZero) {
+      try {
+        const r: any = await confirmZeroOrder({ ref: params.ref });
+        if (!r || !r.ok) {
+          setSending(false);
+          setSendErr(r && r.reason === 'credit-changed'
+            ? 'Your store credit changed. Please go back to checkout and try again.'
+            : 'Could not confirm this order. Nothing was changed. Please try again.');
+          return;
+        }
+      } catch {
+        setSending(false);
+        setSendErr('Could not confirm this order. Nothing was changed. Please try again.');
+        return;
+      }
+      localStorage.setItem('lakky-last-proof', JSON.stringify({ ...p, amount: 0, status: 'Confirmed' }));
+      localStorage.removeItem('lakky-cart');
+      setDone(true); setSending(false);
+      return;
+    }
     try {
       const r: any = await submitReceipt({ ref: params.ref, amount: total, fileBase64: file ? file.base64 : null, contentType: file ? file.type : '', ext: file ? file.ext : '' });
       if (!r.ok) { setSending(false); setSendErr(r.reason === 'receipt-required' ? 'Please upload your receipt photo first.' : 'Could not save. Check your connection and tap Submit again — nothing was sent.'); return; }
@@ -81,8 +102,9 @@ export default function PayPage({ params }: { params: { ref: string } }) {
     setDone(true); setSending(false);
   };
   if (done) return (<div><div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><a href="/checkout" style={{ textDecoration: 'none', fontSize: 20 }}>←</a><h2 style={{ margin: 0 }}>Done</h2></div>
-    <div className="card" style={{ textAlign: 'center' }}><h2>Thank you! We got it.</h2>
+    <div className="card" style={{ textAlign: 'center' }}><h2>{isZero ? 'Your order is confirmed.' : 'Thank you! We got it.'}</h2>
     <div>Your Order ID: <b>{orderId}</b> <button className="btn-s" onClick={() => copyText(orderId, () => { setCopied(true); setTimeout(() => setCopied(false), 2000); })}>{copied ? 'Copied ✓' : 'Copy'}</button></div>
+    <div className="small" style={{ marginTop: 8 }}>{isZero ? 'Paid in full with your store credit. No receipt was needed, and any leftover credit stays in your balance.' : 'We will check your payment and confirm your order shortly.'}</div>
     <div className="small" style={{ marginTop: 8 }}>Use this Order ID + your phone number to track your order.</div>
     <div style={{ marginTop: 8 }}><a className="btn" href="/orders" style={{ textDecoration: 'none' }}>Track your order →</a></div></div></div>);
   return (<div>
@@ -91,6 +113,11 @@ export default function PayPage({ params }: { params: { ref: string } }) {
     <div className="card" style={{ textAlign: 'center' }}><div className="small" style={{ fontWeight: 700 }}>YOUR ORDER ID</div>
       <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--plum)', overflowWrap: 'anywhere' }}>{orderId}</div>
       <button className="btn-s" onClick={() => copyText(orderId, () => { setCopiedId(true); setTimeout(() => setCopiedId(false), 2000); })}>{copiedId ? 'Copied ✓' : 'Copy Order ID'}</button></div>
+    {isZero ? (<div className="card" style={{ textAlign: 'center' }}>
+      <div className="small" style={{ fontWeight: 700 }}>STORE CREDIT COVERS THIS ORDER</div>
+      <div style={{ fontSize: 34, fontWeight: 800, color: 'var(--plum)' }}>₦0 TO PAY</div>
+      <div className="small">The credit used is taken when you confirm. Any leftover stays as your balance.</div>
+    </div>) : (<>
     <div className="card" style={{ textAlign: 'center' }}><div className="small" style={{ fontWeight: 700 }}>TRANSFER EXACTLY</div>
       <div style={{ fontSize: 34, fontWeight: 800, color: 'var(--plum)' }}>₦{total.toLocaleString()}</div>
       <button className="btn-s" onClick={() => copyText(String(total), () => { setCopied(true); setTimeout(() => setCopied(false), 2000); })}>{copied ? 'Copied ✓' : 'Copy amount'}</button></div>
@@ -100,6 +127,12 @@ export default function PayPage({ params }: { params: { ref: string } }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: '1px dashed var(--line)' }}><span>Name</span><b>{bank.accountName}</b></div></div>
     <div className="card"><div className="small" style={{ fontWeight: 700 }}>BANK REMARK — NOTHING TO WRITE</div>
       <div className="small">Leave your bank's remark box empty. We match your payment by the amount, your name and your receipt.</div></div>
+    </>)}
+    {isZero ? (<div className="card" style={{ opacity: 0.55 }}>
+      <div className="small" style={{ fontWeight: 700 }}>RECEIPT — NOT NEEDED</div>
+      <div className="dropzone" aria-disabled="true" style={{ cursor: 'not-allowed' }}><div style={{ fontSize: 28 }}>🔒</div><b>Upload disabled</b><div className="small">Store credit pays this order in full.</div></div>
+      <div><label><input type="checkbox" disabled /> I confirm I have transferred ₦0.</label></div>
+    </div>) : (<>
     <label htmlFor="receipt-file"><div className="dropzone"><div style={{ fontSize: 28 }}>🧾</div><b>Upload your receipt</b><div className="small">Screenshot, SMS alert or photo • up to 5MB</div></div></label>
     <input id="receipt-file" type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => onFile(e.target.files?.[0])} />
     {file && file.base64 && (<div className="card" style={{ textAlign: 'center' }}><div className="small" style={{ fontWeight: 700 }}>YOUR RECEIPT — TAP TO CHANGE IT</div>
@@ -108,7 +141,8 @@ export default function PayPage({ params }: { params: { ref: string } }) {
     {file && !file.base64 && <div className="small">Photo ready ✓ (tap the box to change it)</div>}
     {fileErr && <div><b>{fileErr}</b></div>}
     <div><label><input type="checkbox" checked={box1} onChange={(e) => setBox1(e.target.checked)} /> I confirm I have transferred ₦{total.toLocaleString()}.</label></div>
+    </>)}
     <div><label><input type="checkbox" checked={box2} onChange={(e) => setBox2(e.target.checked)} /> I agree to the <a href="/terms" target="_blank" rel="noreferrer">store rules</a>{(p.method || p.fulfilment) === 'Stockpile' ? ` (free ${s.freeHoldDays}-day hold, then ₦${Number(s.stockpileFeePerDay ?? s.globalDailyFee).toLocaleString()}/day).` : '.'}</label></div>
-    <button className="btn" style={{ width: '100%' }} disabled={!canSubmit} onClick={submit}>{sending ? 'Sending…' : 'Submit receipt'}</button>
+    <button className="btn" style={{ width: '100%' }} disabled={!canSubmit} onClick={submit}>{sending ? (isZero ? 'Confirming…' : 'Sending…') : (isZero ? 'Confirm order' : 'Submit receipt')}</button>
     {sendErr && <div><b>{sendErr}</b></div>}</div>);
 }

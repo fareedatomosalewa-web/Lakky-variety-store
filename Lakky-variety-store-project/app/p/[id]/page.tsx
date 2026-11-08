@@ -20,7 +20,8 @@ export default function ProductPage({ params }: { params: { id: string } }) {
   const [gi, setGi] = useState(0);
   const [touchX, setTouchX] = useState<number | null>(null);
   const [wished, setWished] = useState(false);
-  const [shared, setShared] = useState(false);
+  const [shareMsg, setShareMsg] = useState('');
+  const [shareLink, setShareLink] = useState('');
   const [logged, setLogged] = useState(false);
   useEffect(() => {
     try { setLogged(!!JSON.parse(localStorage.getItem('lakky-customer') || '{}').token); } catch { setLogged(false); }
@@ -68,15 +69,31 @@ export default function ProductPage({ params }: { params: { id: string } }) {
   };
   const share = async () => {
     const url = window.location.origin + '/p/' + params.id;
+    setShareMsg(''); setShareLink('');
+    let copied = false;
     try {
-      if (navigator.share) { await navigator.share({ title: p.name, text: p.name, url }); return; }
-      throw new Error('no-share');
-    } catch {
-      try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(url);
-        setShared(true);
-        setTimeout(() => setShared(false), 2000);
-      } catch { /* ignore */ }
+        copied = true;
+      }
+    } catch { copied = false; }
+    if (!copied) {
+      // Older browsers / blocked clipboard: copy the old-fashioned way.
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = url; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        copied = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch { copied = false; }
+    }
+    if (copied) {
+      setShareMsg('Link copied');
+      setTimeout(() => setShareMsg(''), 2500);
+    } else {
+      // Last resort: show the link so it can be copied by hand.
+      setShareLink(url);
+      setShareMsg('Could not copy automatically. Copy this link:');
     }
   };
   const tiers = (() => { try { const t = typeof p.wholesaleTiers === 'string' ? JSON.parse(p.wholesaleTiers) : p.wholesaleTiers; return Array.isArray(t) ? t : []; } catch { return []; } })();
@@ -105,7 +122,9 @@ export default function ProductPage({ params }: { params: { id: string } }) {
       : <div className="prod-img" style={{ height: 300 }}>{p.emoji || '🛍️'}</div>}
     {videos.length > 0 && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>{videos.map((m: any, i: number) => <video key={i} src={m.url} controls controlsList="nodownload" style={{ maxWidth: '100%', borderRadius: 10 }} />)}</div>}
     <div>{p.badge === 'NEW' ? <span className="badge badge-new">NEW</span> : null}{p.status === 'Restocked' ? <span className="badge">Restocked</span> : null}{showFew ? <span className="badge badge-sale">Few pieces left</span> : null}</div>
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><h2 style={{ margin: '8px 0', flex: 1 }}>{p.name}</h2><button onClick={wish} aria-label="Save to wishlist" style={{ background: 'none', border: 0, fontSize: 24, cursor: 'pointer' }}>{wished ? '❤️' : '🤍'}</button><button className="btn-s" onClick={share} style={{ minHeight: 0 }}>{shared ? 'Link copied ✓' : 'Share'}</button></div>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><h2 style={{ margin: '8px 0', flex: 1 }}>{p.name}</h2><button onClick={wish} aria-label="Save to wishlist" style={{ background: 'none', border: 0, fontSize: 24, cursor: 'pointer' }}>{wished ? '❤️' : '🤍'}</button><button className="btn-s" onClick={share} style={{ minHeight: 0 }}>{shareMsg === 'Link copied' ? 'Link copied ✓' : 'Share'}</button></div>
+    {shareMsg && <div className={shareLink ? 'small' : 'small notice-ok'} style={{ whiteSpace: 'normal' }}>{shareMsg}</div>}
+    {shareLink && <input readOnly value={shareLink} onFocus={(e) => e.currentTarget.select()} aria-label="Share link" style={{ width: '100%' }} />}
     <div className="small">{desc}</div>
     {dims.map((d) => {
       const opts: string[] = [...new Set((p.variants as any[]).map((v: any) => String(v.attrs[d])))];

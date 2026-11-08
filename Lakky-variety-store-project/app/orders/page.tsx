@@ -4,11 +4,12 @@ import { trackOrder } from '../../lib/shop-actions';
 import { useCustomerOnly } from '../../lib/use-customer-only';
 import { pushNotice } from '../../lib/harden';
 import { TimelineSteps } from '../../lib/timeline';
-import { cancelOrder, getMessages, postMessage, requestMoney, setProgress, addReview, reportProblem } from '../../lib/shop-v1';
+import { cancelOrder, cancelPending, getMessages, postMessage, requestMoney, setProgress, addReview, reportProblem } from '../../lib/shop-v1';
 import { askNotifyPermission, toast } from '../../lib/notify-client';
 const STEP_LABEL: Record<string, string> = { pending: 'Waiting for confirmation', processing: 'Confirmed', packaged: 'Being packed', ready: 'Ready for pickup', onway: 'On the way', completed: 'Completed', cancelled: 'Cancelled', 'cancel-requested': 'Cancellation requested' };
 const stepName = (s: string) => STEP_LABEL[s] || s;
 const CANCEL_REASONS = ['Price too high', 'No longer interested', 'Found it elsewhere', 'Ordered by mistake', 'Other'];
+const PENDING_CANCEL_REASONS = ['Price too high', 'No longer interested', 'Other'];
 const when = (iso: any) => { try { return new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
 
 function TimelineCard({ o }: { o: any }) {
@@ -29,12 +30,15 @@ function TimelineCard({ o }: { o: any }) {
 }
 
 function WaitingCard({ p }: { p: any }) {
+  const cancelled = p.status === 'cancelled';
   return (<div className="card">
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
       <h2 style={{ margin: 0, overflowWrap: 'anywhere' }}>{p.displayId}</h2>
-      <span className="badge">Waiting</span>
+      <span className={cancelled ? 'badge badge-err' : 'badge'}>{cancelled ? 'Cancelled' : 'Waiting'}</span>
     </div>
-    <div style={{ marginTop: 8 }}>Your order is waiting for payment confirmation. Tracking opens as soon as we confirm your payment, and we’ll notify you.</div>
+    <div style={{ marginTop: 8 }}>{cancelled
+      ? 'This order was cancelled. No stock is held and your store credit was not taken.'
+      : 'Your order is waiting for payment confirmation. Tracking opens as soon as we confirm your payment, and we’ll notify you.'}</div>
     {p.notice ? <div className="small" style={{ marginTop: 8 }}>Message from shop: {p.notice}</div> : null}
   </div>);
 }
@@ -85,6 +89,7 @@ export default function OrdersPage() {
   const [draft, setDraft] = useState('');
   const [pendDraft, setPendDraft] = useState('');
   const [reason, setReason] = useState(CANCEL_REASONS[0]); const [note, setNote] = useState('');
+  const [pcReason, setPcReason] = useState(PENDING_CANCEL_REASONS[0]); const [pcNote, setPcNote] = useState('');
   const [stars, setStars] = useState(5); const [revNote, setRevNote] = useState(''); const [rated, setRated] = useState(false);
   const [prob, setProb] = useState(''); const [reported, setReported] = useState(false);
   const [bank, setBank] = useState({ name: '', number: '', account: '' });
@@ -113,7 +118,9 @@ export default function OrdersPage() {
       if (r.ok && (r as any).pending) {
         const p = r as any;
         setPend({ ...p, phone });
-        setRes(`${p.displayId} — waiting for payment confirmation (Expected ₦${Number(p.total).toLocaleString()}).${p.notice ? ` Message from shop: ${p.notice}` : ''}`);
+        setRes(p.status === 'cancelled'
+          ? `${p.displayId} — Cancelled. No stock is held and your store credit was not taken.`
+          : `${p.displayId} — waiting for payment confirmation (Expected ₦${Number(p.total).toLocaleString()}).${p.notice ? ` Message from shop: ${p.notice}` : ''}`);
         loadPendMsgs(p.pendingId, p.displayId);
         return;
       }
@@ -124,24 +131,63 @@ export default function OrdersPage() {
   // appear (the header also shows a pop-up for them).
   useEffect(() => {
     if (!o?.id) return;
-    const t = setInterval(() => loadMsgs(o.id, o.displayId, true), 20000);
+    const t = setInterval(() => loadMsgs(o.id, o.displayId, true), 5000);
     return () => clearInterval(t);
   }, [o?.id]);
+  // Same for an order that is still waiting for confirmation (pending chat).
+  useEffect(() => {
+    if (o?.id || !pend?.pendingId) return;
+    const t = setInterval(() => loadPendMsgs(pend.pendingId, pend.displayId), 5000);
+    return () => clearInterval(t);
+  }, [pend?.pendingId, o?.id]);
   const send = async () => {
-    if (!draft.trim() || !o) return;
-    await postMessage({ orderId: o.id, sender: 'customer', text: draft }).catch(() => null);
-    setDraft(''); loadMsgs(o.id, o.displayId);
+    const text = draft.trim();
+    if (!text || !o) return;
+    setDraft('');
+    // Show it immediately; the refresh below replaces the temporary copy.
+    setMsgs((prev) => [...prev, { sender: 'customer', text, at: new Date().toISOString(), pending: true }]);
+    const r: any = await postMessage({ orderId: o.id, sender: 'customer', text }).catch(() => null);
+    if (!r || !r.ok) {
+      setMsgs((prev) => prev.filter((m) => !m.pending));
+      setDraft(text);
+      toast('Message not sent — please tap Send again.');
+      return;
+    }
+    loadMsgs(o.id, o.displayId, true);
   };
   const sendPend = async () => {
-    if (!pendDraft.trim() || !pend) return;
-    await postMessage({ pendingId: pend.pendingId, sender: 'customer', text: pendDraft }).catch(() => null);
-    setPendDraft(''); loadPendMsgs(pend.pendingId, pend.displayId);
+    const text = pendDraft.trim();
+    if (!text || !pend) return;
+    setPendDraft('');
+    setPendMsgs((prev) => [...prev, { sender: 'customer', text, at: new Date().toISOString(), pending: true }]);
+    const r: any = await postMessage({ pendingId: pend.pendingId, sender: 'customer', text }).catch(() => null);
+    if (!r || !r.ok) {
+      setPendMsgs((prev) => prev.filter((m) => !m.pending));
+      setPendDraft(text);
+      toast('Message not sent — please tap Send again.');
+      return;
+    }
+    loadPendMsgs(pend.pendingId, pend.displayId);
   };
   const cancel = async () => {
     if (!o) return;
     if (reason === 'Other' && !note.trim()) { alert('Please write a short note for Other.'); return; }
     await cancelOrder({ orderId: o.id, phone, reason, note }).catch(() => null);
     lookup();
+  };
+  const cancelPend = async () => {
+    if (!pend) return;
+    if (pcReason === 'Other' && !pcNote.trim()) { alert('Please write a short note for Other.'); return; }
+    const r: any = await cancelPending({ pendingId: pend.pendingId, phone, reason: pcReason, note: pcNote }).catch(() => null);
+    if (!r || !r.ok) {
+      if (r && r.reason === 'note-required') alert('Please write a short note for Other.');
+      else if (r && r.reason === 'too-late') alert('This order is already confirmed, so it can no longer be cancelled here.');
+      else alert('Could not cancel. Nothing has changed. Please try again.');
+      return;
+    }
+    setPend((cur: any) => (cur ? { ...cur, status: 'cancelled' } : cur));
+    setRes(`${pend.displayId} — Cancelled. No stock is held and your store credit was not taken.`);
+    toast('Order cancelled.');
   };
   const money = async (kind: string, amount?: number) => {
     if (!o) return;
@@ -191,6 +237,13 @@ export default function OrdersPage() {
       </div>
     </div>
     {pend && !o && (<WaitingCard p={pend} />)}
+    {pend && !o && pend.status !== 'cancelled' && (<div className="card">
+      <h3 style={{ marginTop: 0 }}>Cancel this order</h3>
+      <div className="small">You can cancel before the shop confirms your payment. No stock is held and your store credit is not taken.</div>
+      <select value={pcReason} onChange={(e) => setPcReason(e.target.value)}>{PENDING_CANCEL_REASONS.map((r) => <option key={r} value={r}>{r}</option>)}</select>
+      {pcReason === 'Other' && <input placeholder="Short note (required for Other)" value={pcNote} onChange={(e) => setPcNote(e.target.value)} />}
+      <button className="btn-d" style={{ width: '100%' }} onClick={cancelPend}>Cancel order</button>
+    </div>)}
     {pend && !o && <Thread messages={pendMsgs} draft={pendDraft} setDraft={setPendDraft} send={sendPend} label={pend.displayId} />}
     {o && o.id && (<TimelineCard o={o} />)}
     {o && o.id && <Thread messages={msgs} draft={draft} setDraft={setDraft} send={send} label={o.displayId} />}

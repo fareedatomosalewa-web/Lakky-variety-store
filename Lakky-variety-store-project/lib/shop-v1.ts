@@ -101,7 +101,7 @@ export async function listPending() {
     // ADMIN-GATED:listPending
     if (!(await requireStaffAction())) return { ok: false as const, rows: [] as any[] };
     const sql = conn();
-    const rows = await withRetry(() => sql`select p.id, p.ref, p.display_id as "displayId", p.reference_id as "referenceId", p.expected_total as total, p.status, p.created_at as "at", c.full_name as name, c.phone, (select max(amount_claimed) from payment_submissions s where s.pending_id=p.id) as submitted, exists(select 1 from payment_submissions s where s.pending_id=p.id and s.proof_url is not null and s.proof_url <> '') as "hasReceipt", (select count(*)::int from order_messages m where m.pending_id=p.id and m.sender='customer' and coalesce(m.seen_by_admin,false)=false) as "unread" from pending_refs p left join customers c on c.id=p.customer_id where p.status in ('pending','under') order by p.id desc limit 200`);
+    const rows = await withRetry(() => sql`select p.id, p.ref, p.display_id as "displayId", p.reference_id as "referenceId", p.expected_total as total, p.status, p.created_at as "at", c.full_name as name, c.phone, (select max(amount_claimed) from payment_submissions s where s.pending_id=p.id) as submitted, exists(select 1 from payment_submissions s where s.pending_id=p.id and s.proof_url is not null and s.proof_url <> '') as "hasReceipt", (select count(*)::int from order_messages m where m.pending_id=p.id and m.sender='customer' and coalesce(m.seen_by_admin,false)=false) as "unread" from pending_refs p left join customers c on c.id=p.customer_id where p.status in ('pending','under','cancelled') order by p.id desc limit 200`);
     await sql.end();
     return { ok: true as const, rows };
   } catch { return { ok: false as const, rows: [] as any[] }; }
@@ -697,6 +697,33 @@ export async function cancelOrder(args: { orderId: number; phone: string; reason
     await sql.end();
     return { ok: true as const };
   } catch { return { ok: false as const }; }
+}
+
+// ---- customer cancel BEFORE the owner confirms (no stock held, credit untouched) ----
+export async function cancelPending(args: { pendingId: number; phone: string; reason: string; note?: string }) {
+  try {
+    const reasons = ['Price too high', 'No longer interested', 'Other'];
+    const reason = String(args.reason || '').trim();
+    const note = String(args.note || '').trim().slice(0, 500);
+    if (!reasons.includes(reason)) return { ok: false as const, reason: 'bad-reason' };
+    if (reason === 'Other' && !note) return { ok: false as const, reason: 'note-required' };
+    const sql = conn();
+    const rows = await sql`select p.id, p.status, p.customer_id as "cid", p.display_id as "displayId", c.phone from pending_refs p left join customers c on c.id=p.customer_id where p.id=${args.pendingId} limit 1`;
+    if (!rows.length) { await sql.end(); return { ok: false as const, reason: 'not-found' }; }
+    const row: any = rows[0];
+    if (normalizePhone(String(row.phone || '')) !== normalizePhone(args.phone)) {
+      await sql.end(); return { ok: false as const, reason: 'phone-mismatch' };
+    }
+    if (row.status === 'cancelled') { await sql.end(); return { ok: true as const, displayId: row.displayId, already: true }; }
+    if (!['draft', 'pending', 'under'].includes(String(row.status))) { await sql.end(); return { ok: false as const, reason: 'too-late' }; }
+    // Nothing is reserved before confirm, and credit is only taken at confirm,
+    // so cancelling here holds no stock and leaves the full balance intact.
+    const upd = await sql`update pending_refs set status='cancelled' where id=${row.id} and status in ('draft','pending','under') returning id`;
+    if (!upd.length) { await sql.end(); return { ok: false as const, reason: 'too-late' }; }
+    await sql`insert into order_messages (pending_id, sender, text) values (${row.id}, 'customer', ${'Cancelled: ' + reason + (note ? ' — ' + note : '')})`;
+    await sql.end();
+    return { ok: true as const, displayId: row.displayId };
+  } catch { return { ok: false as const, reason: 'error' }; }
 }
 
 // ---- fulfilment progress + who-completed + reminders due ----

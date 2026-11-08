@@ -117,12 +117,13 @@ export default function AdminDash() {
     }
   };
   const review = items.filter((o) => o.status === 'pending');
-  const under = items.filter((o) => o.status !== 'pending');
+  const under = items.filter((o) => o.status === 'under');
+  const cancelledPend = items.filter((o) => o.status === 'cancelled');
   const week = confirmed.filter((o) => Date.now() - new Date(o.at || Date.now()).getTime() < 7 * 86400000);
   // Same definition as Reports → "Money received": what actually landed in the
   // bank (paid_amount), not what was expected (total).
   const received = week.reduce((s, o) => s + Number(o.paid ?? 0), 0);
-  const rows = tab === 'review' ? review : tab === 'under' ? under : tab === 'completed' ? confirmed.filter((o) => o.st === 'completed') : tab === 'confirmed' ? confirmed.filter((o) => o.st !== 'completed') : tab === 'ready' ? confirmed.filter((o) => o.st === 'ready' || o.st === 'onway') : confirmed.filter((o) => o.st === 'rejected' || o.st === 'cancelled');
+  const rows = tab === 'review' ? review : tab === 'under' ? under : tab === 'completed' ? confirmed.filter((o) => o.st === 'completed') : tab === 'confirmed' ? confirmed.filter((o) => o.st !== 'completed') : tab === 'ready' ? confirmed.filter((o) => o.st === 'ready' || o.st === 'onway') : [...confirmed.filter((o) => o.st === 'rejected' || o.st === 'cancelled'), ...cancelledPend];
   const visible = rows.slice(0, shown);
   const quick = async () => {
     if (!pop) return;
@@ -169,7 +170,7 @@ export default function AdminDash() {
       <div className="sumcard"><div className="t">RECEIVED THIS WEEK</div><div className="n">₦{received.toLocaleString()}</div><div className="small">Money actually received (last 7 days). Reports uses the same definition for the dates you choose.</div></div>
     </div>
     <div className="catchips" style={{ marginTop: 10 }}>
-      {[['review', `To review (${review.length})`], ['under', `Underpaid (${under.length})`], ['confirmed', 'Confirmed'], ['ready', 'Ready'], ['completed', 'Completed'], ['rejected', 'Rejected']].map(([t, label]) => <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{label}</button>)}
+      {[['review', `To review (${review.length})`], ['under', `Underpaid (${under.length})`], ['confirmed', 'Confirmed'], ['ready', 'Ready'], ['completed', 'Completed'], ['rejected', 'Rejected / cancelled']].map(([t, label]) => <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{label}</button>)}
     </div>
     <div className="tablewrap"><table>
       <thead><tr><th></th><th>ORDER ID</th><th>CUSTOMER</th><th>SUBMITTED</th><th>EXPECTED</th><th>CLAIMED</th><th>RECEIPT</th><th>STATUS</th><th></th></tr></thead>
